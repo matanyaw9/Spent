@@ -149,6 +149,24 @@ export interface ReclassifyResult {
 }
 
 /**
+ * Startup pass so classification improvements apply to existing data
+ * immediately, without waiting for the next sync.
+ */
+export function reclassifyAllWorkspaces(): void {
+  const workspaceIds = getDb()
+    .prepare("SELECT id FROM workspaces")
+    .all() as { id: number }[];
+  for (const { id } of workspaceIds) {
+    const result = reclassifyBankCardLines(id);
+    if (result.toTransfer > 0 || result.flaggedUntracked > 0) {
+      console.log(
+        `[reclassify] workspace ${id}: ${result.toTransfer} to transfer, ${result.flaggedUntracked} flagged as untracked card charges`
+      );
+    }
+  }
+}
+
+/**
  * Re-run card-aware transfer detection over all bank-side transactions.
  *
  * Runs after every sync so classification always reflects the full picture:

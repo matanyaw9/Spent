@@ -4,6 +4,7 @@ import {
   setTransactionKind,
   setTransactionNeedsReview,
   getTransactionContext,
+  applyCategoryToMerchant,
 } from "@/server/db/queries/transactions";
 import { recordMerchantCategory } from "@/server/lib/merchant-memory";
 import { recordCorrection } from "@/server/db/queries/category-corrections";
@@ -31,6 +32,7 @@ export async function PUT(
   updateTransactionCategory(workspaceId, numericId, body.categoryId, "user");
   setTransactionNeedsReview(workspaceId, numericId, false);
 
+  let appliedToMerchant = 0;
   if (before && (before.kind === "expense" || before.kind === "income")) {
     const category = getAllCategories(workspaceId).find(
       (c) => c.id === body.categoryId
@@ -42,6 +44,16 @@ export async function PUT(
         body.categoryId,
         category.kind,
         "user"
+      );
+
+      // Merchant memory only affects future syncs; also update the already
+      // imported transactions of this merchant that the user hasn't
+      // categorized themselves.
+      appliedToMerchant = applyCategoryToMerchant(
+        workspaceId,
+        before.description,
+        body.categoryId,
+        category.kind
       );
 
       // If the user just overrode an AI-set category, log it as a correction
@@ -62,7 +74,7 @@ export async function PUT(
     }
   }
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, appliedToMerchant });
 }
 
 export async function PATCH(

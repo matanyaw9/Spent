@@ -2,7 +2,13 @@ import "server-only";
 
 import { getDb } from "../index";
 import { computeDedupHash } from "../../lib/dedup";
-import { detectKind } from "../../lib/transfers";
+import {
+  detectKind,
+  classifyCardLine,
+  isBankProvider,
+  type TrackedCards,
+} from "../../lib/transfers";
+import { normalizeMerchant } from "../../lib/merchant-memory";
 import type {
   TransactionWithCategory,
   MonthlySummary,
@@ -135,6 +141,131 @@ export function insertTransactions(
 
   batchInsert();
   return { added, updated };
+}
+
+export interface ReclassifyResult {
+  toTransfer: number;
+  flaggedUntracked: number;
+}
+
+/**
+ * Re-run card-aware transfer detection over all bank-side transactions.
+ *
+ * Runs after every sync so classification always reflects the full picture:
+ * a card connected later retroactively converts its bank charge lines to
+ * transfers. Only rows with kind_source = 'auto' are touched, so manual
+ * kind overrides always win.
+ */
+export function reclassifyBankCardLines(workspaceId: number): ReclassifyResult {
+  const db = getDb();
+
+  const accounts = db
+    .prepare(
+      `SELECT DISTINCT provider, account_number as accountNumber
+       FROM transactions
+       WHERE workspace_id = ? AND account_number IS NOT NULL`
+    )
+    .all(workspaceId) as { provider: string; accountNumber: string }[];
+
+  const cardAccounts = accounts.filter((a) => !isBankProvider(a.provider));
+  const tracked: TrackedCards = {
+    numbers: cardAccounts.map((a) => a.accountNumber),
+    providers: [...new Set(cardAccounts.map((a) => a.provider))],
+  };
+
+  const rows = db
+    .prepare(
+      `SELECT id, provider, description, charged_amount as chargedAmount,
+              kind, needs_review as needsReview
+       FROM transactions
+       WHERE workspace_id = ? AND kind_source = 'auto' AND is_excluded = 0`
+    )
+    .all(workspaceId) as {
+    id: number;
+    provider: string;
+    description: string;
+    chargedAmount: number;
+    kind: "expense" | "income" | "transfer";
+    needsReview: number;
+  }[];
+
+  const updateStmt = db.prepare(
+    `UPDATE transactions
+     SET kind = ?, needs_review = ?, updated_at = datetime('now')
+     WHERE workspace_id = ? AND id = ?`
+  );
+
+  const result: ReclassifyResult = { toTransfer: 0, flaggedUntracked: 0 };
+
+  db.transaction(() => {
+    for (const row of rows) {
+      if (!isBankProvider(row.provider)) continue;
+
+      const classification = classifyCardLine(row.description, tracked);
+      if (classification === "not-card") continue;
+
+      let kind: "expense" | "income" | "transfer";
+      let needsReview: number;
+      if (classification === "untracked-card") {
+        kind = row.chargedAmount > 0 ? "income" : "expense";
+        needsReview = 1;
+      } else {
+        kind = "transfer";
+        needsReview = 0;
+      }
+
+      if (kind === row.kind && needsReview === row.needsReview) continue;
+      updateStmt.run(kind, needsReview, workspaceId, row.id);
+      if (kind === "transfer") {
+        if (row.kind !== "transfer") result.toTransfer++;
+      } else {
+        result.flaggedUntracked++;
+      }
+    }
+  })();
+
+  return result;
+}
+
+/**
+ * Apply a user's category choice to every other transaction of the same
+ * merchant that the user hasn't categorized themselves. Complements merchant
+ * memory, which only affects future syncs.
+ */
+export function applyCategoryToMerchant(
+  workspaceId: number,
+  description: string,
+  categoryId: number,
+  categoryKind: "expense" | "income"
+): number {
+  const key = normalizeMerchant(description);
+  if (!key) return 0;
+
+  const db = getDb();
+  const candidates = db
+    .prepare(
+      `SELECT id, description FROM transactions
+       WHERE workspace_id = ? AND kind = ? AND is_excluded = 0
+         AND (category_source IS NULL OR category_source = 'ai')`
+    )
+    .all(workspaceId, categoryKind) as { id: number; description: string }[];
+
+  const ids = candidates
+    .filter((c) => normalizeMerchant(c.description) === key)
+    .map((c) => c.id);
+  if (ids.length === 0) return 0;
+
+  const stmt = db.prepare(
+    `UPDATE transactions
+     SET category_id = ?, category_source = 'user', needs_review = 0,
+         updated_at = datetime('now')
+     WHERE workspace_id = ? AND id = ?`
+  );
+  db.transaction(() => {
+    for (const id of ids) stmt.run(categoryId, workspaceId, id);
+  })();
+
+  return ids.length;
 }
 
 interface QueryParams {
@@ -619,7 +750,7 @@ export function setTransactionKind(
   getDb()
     .prepare(
       `UPDATE transactions
-       SET kind = ?, updated_at = datetime('now')
+       SET kind = ?, kind_source = 'user', updated_at = datetime('now')
        WHERE workspace_id = ? AND id = ?`
     )
     .run(kind, workspaceId, id);

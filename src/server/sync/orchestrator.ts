@@ -15,6 +15,7 @@ import {
 } from "@/server/db/queries/sync-runs";
 import {
   insertTransactions,
+  reclassifyBankCardLines,
   getUncategorizedIdsByKind,
   getTransactionsForCategorization,
   batchUpdateCategories,
@@ -264,6 +265,7 @@ async function syncOneCredential(
     syncRunId
   );
   applyMerchantRulesToSyncRun(workspaceId, syncRunId);
+  reclassifyBankCardLines(workspaceId);
   completeSyncRun(syncRunId, added, updated);
 
   return {

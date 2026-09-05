@@ -38,6 +38,7 @@ export interface Transaction {
 export interface TransactionWithCategory extends Transaction {
   categoryName: string | null;
   categoryColor: string | null;
+  categoryIcon: string | null;
   isExcluded: boolean;
 }
 
@@ -289,6 +290,8 @@ export interface AppSettings {
   autoSyncEnabled: boolean;
   autoSyncTime: string;
   language: "en" | "he";
+  /** User-saved swatches shown alongside the built-in category palette. */
+  customCategoryColors: string[];
 }
 
 export type BankProvider =

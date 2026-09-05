@@ -277,6 +277,14 @@ export function deleteTransaction(id: number) {
   });
 }
 
+export function updateCategoryIcon(id: number, icon: string | null) {
+  return fetchJSON<{ success: boolean }>(`/api/categories/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ icon }),
+  });
+}
+
 export function updateCategoryColor(id: number, color: string) {
   return fetchJSON<{ success: boolean }>(`/api/categories/${id}`, {
     method: "PATCH",

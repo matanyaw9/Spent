@@ -5,6 +5,7 @@ import {
   updateCategoryBudgetMode,
   updateCategoryColor,
   updateCategoryDescription,
+  updateCategoryIcon,
 } from "@/server/db/queries/categories";
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
 
@@ -33,9 +34,33 @@ export async function PATCH(
     description?: unknown;
     parentId?: unknown;
     color?: unknown;
+    icon?: unknown;
   };
 
   let applied = false;
+
+  if (typed.icon !== undefined) {
+    // Emoji only (a couple of glyphs), or null to clear. ZWJ sequences
+    // like a profession emoji run to ~8 UTF-16 units.
+    if (
+      typed.icon !== null &&
+      (typeof typed.icon !== "string" || typed.icon.trim().length > 12)
+    ) {
+      return NextResponse.json(
+        { error: "icon must be a short emoji string or null" },
+        { status: 400 }
+      );
+    }
+    const value =
+      typeof typed.icon === "string" && typed.icon.trim()
+        ? typed.icon.trim()
+        : null;
+    const ok = updateCategoryIcon(workspaceId, categoryId, value);
+    if (!ok) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    applied = true;
+  }
 
   if (typed.color !== undefined) {
     if (

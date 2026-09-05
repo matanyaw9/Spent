@@ -34,8 +34,6 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   ArrowLeftRight,
-  Wallet,
-  Tags,
   EyeOff,
   Eye,
   Trash2,
@@ -52,31 +50,13 @@ import {
 } from "@/lib/api";
 import { CategoryPicker } from "@/components/transactions/category-picker";
 import { toast } from "sonner";
-import { translateCategoryName, translateProviderName } from "@/lib/i18n-data";
-import {
-  getAccountDisplayLabel,
-  TransactionSourceCell,
-} from "@/components/transactions/transaction-source-cell";
-import {
-  TransactionMultiFilter,
-  MultiFilterOption,
-} from "@/components/transactions/transaction-multi-filter";
-import {
-  formatMultiFilterDisplay,
-  getCategoryDescendantIds,
-  isCategoryFilterChecked,
-  toggleCategoryFilterSelection,
-} from "@/lib/transaction-filters";
+import { translateCategoryName } from "@/lib/i18n-data";
+import { categoryEmoji } from "@/lib/category-emoji";
+import { TransactionSourceCell } from "@/components/transactions/transaction-source-cell";
 import { SortableTableHead } from "@/components/transactions/sortable-table-head";
 import type { SortOrder, TransactionSortField } from "@/lib/transaction-sort";
 import { cn } from "@/lib/utils";
-import { ProviderBadge } from "@/components/setup/provider-badge";
-import type {
-  TransactionWithCategory,
-  Category,
-  Integration,
-} from "@/lib/types";
-import { BANK_PROVIDERS } from "@/lib/types";
+import type { TransactionWithCategory } from "@/lib/types";
 import type { Locale } from "@/i18n/routing";
 
 type Kind = "expense" | "income" | "transfer";
@@ -84,15 +64,15 @@ type Kind = "expense" | "income" | "transfer";
 interface TransactionsTableProps {
   transactions: TransactionWithCategory[];
   total: number;
-  categories: Category[];
-  integrations: Integration[];
   loading: boolean;
   search: string;
   onSearchChange: (search: string) => void;
-  categoryFilter: number[];
-  onCategoryFilterChange: (categoryIds: number[]) => void;
-  accountFilter: number[];
-  onAccountFilterChange: (credentialIds: number[]) => void;
+  /** True when any filter beyond the free-text search is active. */
+  filtersActive: boolean;
+  /** Filter and add controls, rendered next to the search box. */
+  headerSlot?: React.ReactNode;
+  /** Removable active-filter chips, rendered under the header row. */
+  chipsSlot?: React.ReactNode;
   page: number;
   onPageChange: (page: number) => void;
   sortField: TransactionSortField;
@@ -115,15 +95,12 @@ const PAGE_SIZE = 50;
 export function TransactionsTable({
   transactions,
   total,
-  categories,
-  integrations,
   loading,
   search,
   onSearchChange,
-  categoryFilter,
-  onCategoryFilterChange,
-  accountFilter,
-  onAccountFilterChange,
+  filtersActive,
+  headerSlot,
+  chipsSlot,
   page,
   onPageChange,
   sortField,
@@ -141,7 +118,6 @@ export function TransactionsTable({
 }: TransactionsTableProps) {
   const t = useTranslations("transactions");
   const tCat = useTranslations("categoriesSeeded");
-  const tBanks = useTranslations("banks");
   const locale = useLocale() as Locale;
   const queryClient = useQueryClient();
   const [updatingId, setUpdatingId] = useState<number | null>(null);
@@ -310,117 +286,6 @@ export function TransactionsTable({
     }
   };
 
-  const accountOptions = integrations
-    .map((integration) => {
-      const info = BANK_PROVIDERS.find((b) => b.id === integration.provider);
-      const providerName = translateProviderName(
-        integration.provider,
-        info?.name ?? integration.provider,
-        tBanks
-      );
-      const { primary } = getAccountDisplayLabel(
-        providerName,
-        integration.label
-      );
-      return { integration, info, providerName, primary };
-    })
-    .sort((a, b) => a.primary.localeCompare(b.primary));
-
-  const showAccountFilter = accountOptions.length > 1;
-
-  const toggleFilterId = (ids: number[], id: number): number[] =>
-    ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
-
-  const accountLabels = accountFilter
-    .map(
-      (id) =>
-        accountOptions.find((o) => o.integration.id === id)?.primary
-    )
-    .filter((name): name is string => name != null);
-
-  const accountDisplayValue = formatMultiFilterDisplay(
-    accountLabels,
-    t("filterAny"),
-    (count) => t("filterSelectedCount", { count })
-  );
-
-  const categoryLabels = categoryFilter
-    .map((id) => categories.find((c) => c.id === id))
-    .filter((c): c is Category => c != null)
-    .map((c) => translateCategoryName(c.name, tCat));
-
-  const categoryDisplayValue = formatMultiFilterDisplay(
-    categoryLabels,
-    t("filterAny"),
-    (count) => t("filterSelectedCount", { count })
-  );
-
-  const hasActiveFilters =
-    categoryFilter.length > 0 || accountFilter.length > 0;
-
-  const handleClearFilters = () => {
-    onCategoryFilterChange([]);
-    onAccountFilterChange([]);
-    onPageChange(0);
-  };
-
-  const allCategoryIds = [
-    ...new Set(
-      categories.flatMap((c) => getCategoryDescendantIds(c.id, categories))
-    ),
-  ];
-  const allAccountIds = accountOptions.map((o) => o.integration.id);
-
-  const renderCategoryFilterOptions = (
-    parentId: number | null,
-    depth: number
-  ): React.ReactNode[] => {
-    const items = categories
-      .filter((c) => c.parentId === parentId)
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const nodes: React.ReactNode[] = [];
-    for (const cat of items) {
-      const hasChildren = categories.some((c) => c.parentId === cat.id);
-      const name = translateCategoryName(cat.name, tCat);
-      nodes.push(
-        <MultiFilterOption
-          key={cat.id}
-          selected={isCategoryFilterChecked(
-            cat.id,
-            categoryFilter,
-            categories
-          )}
-          onToggle={() =>
-            onCategoryFilterChange(
-              toggleCategoryFilterSelection(
-                categoryFilter,
-                cat.id,
-                categories
-              )
-            )
-          }
-          className={depth > 0 ? "ps-2" : undefined}
-        >
-          <div
-            className={cn(
-              "flex items-center gap-2",
-              hasChildren && "font-semibold"
-            )}
-            style={{ paddingInlineStart: depth > 0 ? depth * 12 : 0 }}
-          >
-            <div
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ backgroundColor: cat.color }}
-            />
-            {name}
-          </div>
-        </MultiFilterOption>
-      );
-      nodes.push(...renderCategoryFilterOptions(cat.id, depth + 1));
-    }
-    return nodes;
-  };
-
   return (
     <Card className="rounded-2xl border border-border bg-card shadow-none">
       <CardHeader>
@@ -438,68 +303,11 @@ export function TransactionsTable({
               }}
               className="h-8 w-[200px]"
             />
-            {showAccountFilter ? (
-              <TransactionMultiFilter
-                label={t("filterAccount")}
-                icon={Wallet}
-                displayValue={accountDisplayValue}
-                triggerClassName="w-[200px]"
-                selectAllLabel={t("filterSelectAll")}
-                clearLabel={t("filterClearSelection")}
-                onSelectAll={() => onAccountFilterChange(allAccountIds)}
-                onClear={() => onAccountFilterChange([])}
-              >
-                {accountOptions.map(({ integration, info, primary }) => (
-                  <MultiFilterOption
-                    key={integration.id}
-                    selected={accountFilter.includes(integration.id)}
-                    onToggle={() =>
-                      onAccountFilterChange(
-                        toggleFilterId(accountFilter, integration.id)
-                      )
-                    }
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      {info ? (
-                        <ProviderBadge
-                          color={info.color}
-                          name={primary}
-                          domain={info.domain}
-                          size={16}
-                          radius={5}
-                        />
-                      ) : null}
-                      <span className="truncate">{primary}</span>
-                    </div>
-                  </MultiFilterOption>
-                ))}
-              </TransactionMultiFilter>
-            ) : null}
-            <TransactionMultiFilter
-              label={t("filterCategory")}
-              icon={Tags}
-              displayValue={categoryDisplayValue}
-              selectAllLabel={t("filterSelectAll")}
-              clearLabel={t("filterClearSelection")}
-              onSelectAll={() => onCategoryFilterChange(allCategoryIds)}
-              onClear={() => onCategoryFilterChange([])}
-            >
-              {renderCategoryFilterOptions(null, 0)}
-            </TransactionMultiFilter>
-            {hasActiveFilters ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 shrink-0 px-2 text-xs text-muted-foreground"
-                onClick={handleClearFilters}
-              >
-                {t("filterClear")}
-              </Button>
-            ) : null}
+            {headerSlot}
           </div>
         </div>
-        {hasActiveFilters || search.trim().length > 0 ? (
+        {chipsSlot}
+        {filtersActive || search.trim().length > 0 ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {t("filterScopedToList")}
           </p>
@@ -520,10 +328,7 @@ export function TransactionsTable({
           </div>
         ) : transactions.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            {search ||
-            categoryFilter.length > 0 ||
-            accountFilter.length > 0 ||
-            notCountedOnly
+            {search || filtersActive || notCountedOnly
               ? t("emptyWithFilters")
               : t("emptyNoData")}
           </div>
@@ -763,6 +568,11 @@ export function TransactionsTable({
                                   : undefined
                               }
                             >
+                              {categoryEmoji(txn.categoryIcon) && (
+                                <span className="me-0.5">
+                                  {categoryEmoji(txn.categoryIcon)}
+                                </span>
+                              )}
                               {categoryName}
                             </Badge>
                           </CategoryPicker>

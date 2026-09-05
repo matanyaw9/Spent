@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Check, SlidersHorizontal } from "lucide-react";
+import { Check, SlidersHorizontal, X } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -10,9 +10,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProviderBadge } from "@/components/setup/provider-badge";
-import { translateProviderName } from "@/lib/i18n-data";
-import { BANK_PROVIDERS } from "@/lib/types";
+import { MultiFilterOption } from "./transaction-multi-filter";
+import { translateCategoryName, translateProviderName } from "@/lib/i18n-data";
+import {
+  isCategoryFilterChecked,
+  toggleCategoryFilterSelection,
+} from "@/lib/transaction-filters";
+import { categoryEmoji } from "@/lib/category-emoji";
+import { BANK_PROVIDERS, type Category } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/formatters";
 import type { TransactionAccount } from "@/lib/api";
 
 export interface AdvancedFilters {
@@ -49,16 +56,67 @@ interface TransactionFiltersPopoverProps {
   value: AdvancedFilters;
   onChange: (value: AdvancedFilters) => void;
   accounts: TransactionAccount[];
+  categories: Category[];
+  categoryFilter: number[];
+  onCategoryFilterChange: (categoryIds: number[]) => void;
 }
 
 export function TransactionFiltersPopover({
   value,
   onChange,
   accounts,
+  categories,
+  categoryFilter,
+  onCategoryFilterChange,
 }: TransactionFiltersPopoverProps) {
   const t = useTranslations("transactions");
   const tBanks = useTranslations("banks");
-  const activeCount = countActiveAdvancedFilters(value);
+  const tCat = useTranslations("categoriesSeeded");
+  const activeCount =
+    countActiveAdvancedFilters(value) + (categoryFilter.length > 0 ? 1 : 0);
+
+  const renderCategoryOptions = (
+    parentId: number | null,
+    depth: number
+  ): React.ReactNode[] => {
+    const items = categories
+      .filter((c) => c.parentId === parentId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const nodes: React.ReactNode[] = [];
+    for (const cat of items) {
+      const hasChildren = categories.some((c) => c.parentId === cat.id);
+      nodes.push(
+        <MultiFilterOption
+          key={cat.id}
+          selected={isCategoryFilterChecked(cat.id, categoryFilter, categories)}
+          onToggle={() =>
+            onCategoryFilterChange(
+              toggleCategoryFilterSelection(categoryFilter, cat.id, categories)
+            )
+          }
+        >
+          <div
+            className={cn(
+              "flex items-center gap-2",
+              hasChildren && "font-semibold"
+            )}
+            style={{ paddingInlineStart: depth > 0 ? depth * 12 : 0 }}
+          >
+            <div
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ backgroundColor: cat.color }}
+            />
+            {categoryEmoji(cat.icon) && (
+              <span className="-me-1">{categoryEmoji(cat.icon)}</span>
+            )}
+            {translateCategoryName(cat.name, tCat)}
+          </div>
+        </MultiFilterOption>
+      );
+      nodes.push(...renderCategoryOptions(cat.id, depth + 1));
+    }
+    return nodes;
+  };
 
   const set = (patch: Partial<AdvancedFilters>) =>
     onChange({ ...value, ...patch });
@@ -85,6 +143,15 @@ export function TransactionFiltersPopover({
         )}
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 space-y-4 p-4">
+        <div className="space-y-1.5">
+          <div className="text-xs font-medium text-foreground/80">
+            {t("filterCategory")}
+          </div>
+          <div className="max-h-48 overflow-y-auto rounded-lg border border-border/60 p-1">
+            {renderCategoryOptions(null, 0)}
+          </div>
+        </div>
+
         <div className="space-y-1.5">
           <div className="text-xs font-medium text-foreground/80">
             {t("filterExcludedLabel")}
@@ -236,7 +303,10 @@ export function TransactionFiltersPopover({
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-xs text-muted-foreground"
-              onClick={() => onChange(EMPTY_ADVANCED_FILTERS)}
+              onClick={() => {
+                onChange(EMPTY_ADVANCED_FILTERS);
+                onCategoryFilterChange([]);
+              }}
             >
               {t("filterClearAll")}
             </Button>
@@ -244,5 +314,130 @@ export function TransactionFiltersPopover({
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+interface ActiveFilterChipsProps {
+  value: AdvancedFilters;
+  onChange: (value: AdvancedFilters) => void;
+  categories: Category[];
+  categoryFilter: number[];
+  onCategoryFilterChange: (categoryIds: number[]) => void;
+}
+
+function Chip({
+  label,
+  onRemove,
+}: {
+  label: string;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground/80">
+      {label}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
+
+/**
+ * The compressed Filters button paired with a spread-out active state:
+ * every live filter renders as a removable chip under the table header,
+ * so nothing is hidden but the header never crowds.
+ */
+export function ActiveFilterChips({
+  value,
+  onChange,
+  categories,
+  categoryFilter,
+  onCategoryFilterChange,
+}: ActiveFilterChipsProps) {
+  const t = useTranslations("transactions");
+  const tCat = useTranslations("categoriesSeeded");
+
+  // Show only the top-most selected categories: when a parent is selected
+  // its children ride along and would just repeat it.
+  const categoryChips = categoryFilter
+    .map((id) => categories.find((c) => c.id === id))
+    .filter((c): c is Category => c != null)
+    .filter((c) => c.parentId == null || !categoryFilter.includes(c.parentId));
+
+  const chips: { key: string; label: string; onRemove: () => void }[] = [
+    ...categoryChips.map((cat) => ({
+      key: `cat-${cat.id}`,
+      label: [categoryEmoji(cat.icon), translateCategoryName(cat.name, tCat)]
+        .filter(Boolean)
+        .join(" "),
+      onRemove: () =>
+        onCategoryFilterChange(
+          toggleCategoryFilterSelection(categoryFilter, cat.id, categories)
+        ),
+    })),
+  ];
+
+  if (value.excluded != null) {
+    chips.push({
+      key: "excluded",
+      label:
+        value.excluded === "hide"
+          ? t("filterExcludedHide")
+          : t("filterExcludedOnly"),
+      onRemove: () => onChange({ ...value, excluded: null }),
+    });
+  }
+  if (value.amountMin || value.amountMax) {
+    const min = value.amountMin ? formatCurrency(Number(value.amountMin)) : "";
+    const max = value.amountMax ? formatCurrency(Number(value.amountMax)) : "";
+    chips.push({
+      key: "amount",
+      label: min && max ? `${min} – ${max}` : min ? `≥ ${min}` : `≤ ${max}`,
+      onRemove: () => onChange({ ...value, amountMin: "", amountMax: "" }),
+    });
+  }
+  if (value.dateFrom || value.dateTo) {
+    chips.push({
+      key: "dates",
+      label: `${value.dateFrom || "…"} – ${value.dateTo || "…"}`,
+      onRemove: () => onChange({ ...value, dateFrom: "", dateTo: "" }),
+    });
+  }
+  for (const account of value.accountNumbers) {
+    chips.push({
+      key: `acc-${account}`,
+      label: account,
+      onRemove: () =>
+        onChange({
+          ...value,
+          accountNumbers: value.accountNumbers.filter((a) => a !== account),
+        }),
+    });
+  }
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      {chips.map((chip) => (
+        <Chip key={chip.key} label={chip.label} onRemove={chip.onRemove} />
+      ))}
+      {chips.length > 1 && (
+        <button
+          type="button"
+          onClick={() => {
+            onChange(EMPTY_ADVANCED_FILTERS);
+            onCategoryFilterChange([]);
+          }}
+          className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:underline"
+        >
+          {t("filterClearAll")}
+        </button>
+      )}
+    </div>
   );
 }

@@ -29,6 +29,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { formatCurrency } from "@/lib/formatters";
+import { categoryEmoji } from "@/lib/category-emoji";
 import { translateCategoryName } from "@/lib/i18n-data";
 import type { CategoryWithData, BudgetStatus } from "@/lib/types";
 import type { Locale } from "@/i18n/routing";
@@ -68,6 +69,7 @@ export function CategoryCard({ data, onClick }: CategoryCardProps) {
   const t = useTranslations("dashboard");
   const tCat = useTranslations("categoriesSeeded");
   const locale = useLocale() as Locale;
+  const emoji = categoryEmoji(data.categoryIcon);
   const Icon = ICON_MAP[data.categoryIcon ?? "circle-dot"] ?? CircleDot;
   const percent = Math.min(999, Math.round(data.percentSpent));
   const vsLast = data.vsLastMonth;
@@ -85,7 +87,11 @@ export function CategoryCard({ data, onClick }: CategoryCardProps) {
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
             style={{ background: tint(data.categoryColor, 0.18) }}
           >
-            <Icon className="h-5 w-5" style={{ color: shade(data.categoryColor) }} />
+            {emoji ? (
+              <span className="text-lg leading-none">{emoji}</span>
+            ) : (
+              <Icon className="h-5 w-5" style={{ color: shade(data.categoryColor) }} />
+            )}
           </div>
           <div className="min-w-0 flex-1">
             {parentName && (

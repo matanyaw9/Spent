@@ -134,6 +134,19 @@ export function updateCategoryColor(
   return result.changes > 0;
 }
 
+export function updateCategoryIcon(
+  workspaceId: number,
+  id: number,
+  icon: string | null
+): boolean {
+  const result = getDb()
+    .prepare(
+      "UPDATE categories SET icon = ? WHERE workspace_id = ? AND id = ?"
+    )
+    .run(icon, workspaceId, id);
+  return result.changes > 0;
+}
+
 export function updateCategoryBudgetMode(
   workspaceId: number,
   id: number,

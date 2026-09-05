@@ -1,5 +1,6 @@
 "use client";
 
+import { categoryEmoji } from "@/lib/category-emoji";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Search } from "lucide-react";
@@ -268,7 +269,12 @@ function CategoryRow({
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-medium">
-            <span className="truncate">{category.name}</span>
+            <span className="truncate">
+              {categoryEmoji(category.icon) && (
+                <span className="me-1">{categoryEmoji(category.icon)}</span>
+              )}
+              {category.name}
+            </span>
           </div>
           {description ? (
             <div className="mt-0.5 truncate text-xs text-muted-foreground">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { Plus, Search } from "lucide-react";
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/popover";
 import { createCategory, getCategories } from "@/lib/api";
 import { translateCategoryName } from "@/lib/i18n-data";
+import { categoryEmoji } from "@/lib/category-emoji";
 import { cn } from "@/lib/utils";
 import type { Category, CategoryKind } from "@/lib/types";
 
@@ -45,6 +46,18 @@ export function CategoryPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus the search field once the popup is positioned. A plain autoFocus
+  // fires while the portal still sits at the top of the document and makes
+  // the page scroll-jump there.
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
 
   const expenseQuery = useQuery({
     queryKey: ["categories", "expense"],
@@ -130,7 +143,7 @@ export function CategoryPicker({
         <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
           <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <input
-            autoFocus
+            ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -163,6 +176,9 @@ export function CategoryPicker({
                     style={{ backgroundColor: cat.color }}
                   />
                   <span className="truncate">
+                    {categoryEmoji(cat.icon) && (
+                      <span className="me-1">{categoryEmoji(cat.icon)}</span>
+                    )}
                     {translateCategoryName(cat.name, tCat)}
                   </span>
                 </button>

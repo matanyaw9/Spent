@@ -70,6 +70,9 @@ export function getAppSettings(workspaceId: number): AppSettings {
   const storedLang = getGlobalSetting("language");
   return {
     monthsToSync: Number(getWorkspaceSetting(workspaceId, "months_to_sync") ?? "3"),
+    customCategoryColors: parseCustomColors(
+      getWorkspaceSetting(workspaceId, "custom_category_colors")
+    ),
     aiProvider: (getGlobalSetting("ai_provider") ?? "none") as AppSettings["aiProvider"],
     ollamaUrl: getGlobalSetting("ai_ollama_url") ?? "http://localhost:11434",
     ollamaModel: getGlobalSetting("ai_ollama_model") ?? "llama3.2:3b",
@@ -81,6 +84,22 @@ export function getAppSettings(workspaceId: number): AppSettings {
       storedTime && AUTO_SYNC_TIME_RE.test(storedTime) ? storedTime : "06:00",
     language: storedLang === "he" ? "he" : "en",
   };
+}
+
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const MAX_CUSTOM_COLORS = 24;
+
+function parseCustomColors(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((c): c is string => typeof c === "string" && HEX_COLOR_RE.test(c))
+      .slice(0, MAX_CUSTOM_COLORS);
+  } catch {
+    return [];
+  }
 }
 
 export function updateAppSettings(
@@ -141,6 +160,25 @@ export function updateAppSettings(
         throw new Error("language must be 'en' or 'he'");
       }
       setGlobalSetting("language", settings.language);
+    }
+    if (settings.customCategoryColors !== undefined) {
+      if (
+        !Array.isArray(settings.customCategoryColors) ||
+        !settings.customCategoryColors.every(
+          (c) => typeof c === "string" && HEX_COLOR_RE.test(c)
+        )
+      ) {
+        throw new Error("customCategoryColors must be #rrggbb hex strings");
+      }
+      const deduped = [...new Set(settings.customCategoryColors)].slice(
+        0,
+        MAX_CUSTOM_COLORS
+      );
+      setWorkspaceSetting(
+        workspaceId,
+        "custom_category_colors",
+        JSON.stringify(deduped)
+      );
     }
   });
   update();

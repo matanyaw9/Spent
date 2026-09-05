@@ -18,7 +18,9 @@ import { BulkActionBar } from "./bulk-action-bar";
 import { AddTransactionDialog } from "./add-transaction-dialog";
 import {
   TransactionFiltersPopover,
+  ActiveFilterChips,
   EMPTY_ADVANCED_FILTERS,
+  countActiveAdvancedFilters,
   type AdvancedFilters,
 } from "./transaction-filters-popover";
 import {
@@ -26,7 +28,6 @@ import {
   getCategories,
   getTransactions,
   getTransactionsSummary,
-  listIntegrations,
   listTransactionAccounts,
 } from "@/lib/api";
 import type { BulkTransactionAction, TransactionKindFilter } from "@/lib/api";
@@ -49,7 +50,6 @@ export function TransactionsPage() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<number[]>([]);
-  const [accountFilter, setAccountFilter] = useState<number[]>([]);
   const [page, setPage] = useState(0);
   const [kind, setKind] = useState<TransactionKindFilter>("all");
   const [sortField, setSortField] = useState<TransactionSortField>("date");
@@ -94,7 +94,6 @@ export function TransactionsPage() {
     to,
     search,
     categoryFilter,
-    accountFilter,
     kind,
     notCountedOnly,
     advancedFilters,
@@ -109,10 +108,6 @@ export function TransactionsPage() {
   const allCategoriesQuery = useQuery({
     queryKey: ["categories"],
     queryFn: () => getCategories(),
-  });
-  const integrationsQuery = useQuery({
-    queryKey: ["integrations"],
-    queryFn: () => listIntegrations(),
   });
   const accountsQuery = useQuery({
     queryKey: ["transaction-accounts"],
@@ -131,7 +126,6 @@ export function TransactionsPage() {
       to,
       search,
       categoryFilter,
-      accountFilter,
       page,
       kind,
       sortField,
@@ -145,8 +139,6 @@ export function TransactionsPage() {
         to,
         search: search || undefined,
         categoryIds: expandedCategoryIds,
-        credentialIds:
-          accountFilter.length > 0 ? accountFilter : undefined,
         limit: 50,
         offset: page * 50,
         kind,
@@ -166,12 +158,6 @@ export function TransactionsPage() {
     queryFn: () => getTransactionsSummary({ from, to }),
   });
 
-  const categoriesQuery = useQuery({
-    queryKey: ["categories", kind === "income" ? "income" : "expense"],
-    queryFn: () =>
-      kind === "income" ? getCategories("income") : getCategories("expense"),
-  });
-
   const monthLabel = formatMonthLabel(selectedDate, locale);
 
   const pageRows = transactionsQuery.data?.transactions ?? [];
@@ -187,8 +173,22 @@ export function TransactionsPage() {
         setAllMatching(false);
       }
     };
+    // Clicking outside the table (and outside any portaled popup or the
+    // bulk bar) drops the selection, like a mail client. Portaled content
+    // and app controls carry data-slot; the table and bar opt in via
+    // data-keep-selection.
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-keep-selection], [data-slot]")) return;
+      setSelectedIds(new Set());
+      setAllMatching(false);
+    };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("mousedown", onMouseDown);
+    };
   }, [hasSelection]);
 
   const clearSelection = () => {
@@ -224,8 +224,6 @@ export function TransactionsPage() {
               categoryIds: expandedCategoryIds?.length
                 ? expandedCategoryIds
                 : undefined,
-              credentialIds:
-                accountFilter.length > 0 ? accountFilter : undefined,
               kind,
               notCounted: notCountedOnly || undefined,
               excluded: excludedFilter,
@@ -256,7 +254,8 @@ export function TransactionsPage() {
       } else {
         toast.success(t("bulkAppliedToast", { count: result.updated }));
       }
-      clearSelection();
+      // The selection stays: labeling a batch and then excluding it (or
+      // fixing its kind) is a natural two-step flow.
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -292,7 +291,6 @@ export function TransactionsPage() {
           loading={summaryInitialLoading}
         />
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-border bg-card p-1 w-fit">
           {filterOptions.map((opt) => {
             const active = kind === opt.value;
@@ -316,25 +314,50 @@ export function TransactionsPage() {
             );
           })}
         </div>
-        <div className="flex items-center gap-2">
-          <TransactionFiltersPopover
-            value={advancedFilters}
-            onChange={(next) => {
-              setAdvancedFilters(next);
-              setPage(0);
-            }}
-            accounts={accountsQuery.data ?? []}
-          />
-          <AddTransactionDialog />
-        </div>
-        </div>
 
+        <div data-keep-selection>
         <TransactionsTable
           transactions={transactionsQuery.data?.transactions ?? []}
           total={transactionsQuery.data?.total ?? 0}
-          categories={categoriesQuery.data ?? []}
-          integrations={integrationsQuery.data ?? []}
           loading={tableInitialLoading}
+          filtersActive={
+            categoryFilter.length > 0 ||
+            countActiveAdvancedFilters(advancedFilters) > 0
+          }
+          headerSlot={
+            <>
+              <TransactionFiltersPopover
+                value={advancedFilters}
+                onChange={(next) => {
+                  setAdvancedFilters(next);
+                  setPage(0);
+                }}
+                accounts={accountsQuery.data ?? []}
+                categories={allCategoriesQuery.data ?? []}
+                categoryFilter={categoryFilter}
+                onCategoryFilterChange={(ids) => {
+                  setCategoryFilter(ids);
+                  setPage(0);
+                }}
+              />
+              <AddTransactionDialog />
+            </>
+          }
+          chipsSlot={
+            <ActiveFilterChips
+              value={advancedFilters}
+              onChange={(next) => {
+                setAdvancedFilters(next);
+                setPage(0);
+              }}
+              categories={allCategoriesQuery.data ?? []}
+              categoryFilter={categoryFilter}
+              onCategoryFilterChange={(ids) => {
+                setCategoryFilter(ids);
+                setPage(0);
+              }}
+            />
+          }
           isFetching={transactionsQuery.isFetching}
           sortField={sortField}
           sortOrder={sortOrder}
@@ -346,16 +369,6 @@ export function TransactionsPage() {
           }}
           search={search}
           onSearchChange={setSearch}
-          categoryFilter={categoryFilter}
-          onCategoryFilterChange={(ids) => {
-            setCategoryFilter(ids);
-            setPage(0);
-          }}
-          accountFilter={accountFilter}
-          onAccountFilterChange={(ids) => {
-            setAccountFilter(ids);
-            setPage(0);
-          }}
           page={page}
           onPageChange={setPage}
           selectedIds={selectedIds}
@@ -370,6 +383,7 @@ export function TransactionsPage() {
             setPage(0);
           }}
         />
+        </div>
       </div>
 
       {hasSelection && bulkCount > 0 && (

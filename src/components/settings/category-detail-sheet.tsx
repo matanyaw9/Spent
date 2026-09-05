@@ -34,13 +34,17 @@ import {
 import {
   deleteCategory,
   getCategories,
+  getSettings,
   setCategoryParent,
+  updateCategoryIcon,
   updateBudget,
   updateCategoryBudgetMode,
   updateCategoryColor,
   updateCategoryDescription,
+  updateSettings,
 } from "@/lib/api";
 import { CATEGORY_COLOR_PALETTE } from "@/lib/category-palette";
+import { categoryEmoji } from "@/lib/category-emoji";
 import { cn } from "@/lib/utils";
 import type { Category, CategoryWithData } from "@/lib/types";
 
@@ -157,6 +161,8 @@ function Body({
           category={category}
           eligibleParents={eligibleParents}
         />
+
+        <IconSection category={category} />
 
         <ColorSection category={category} />
 
@@ -486,9 +492,89 @@ function GroupSection({
   );
 }
 
+function IconSection({ category }: { category: Category }) {
+  const queryClient = useQueryClient();
+  const savedEmoji = categoryEmoji(category.icon) ?? "";
+  const [value, setValue] = useState(savedEmoji);
+  // Reset when the saved icon changes (guarded update during render).
+  const [prevIcon, setPrevIcon] = useState(category.icon);
+  if (prevIcon !== category.icon) {
+    setPrevIcon(category.icon);
+    setValue(categoryEmoji(category.icon) ?? "");
+  }
+
+  const mutation = useMutation({
+    mutationFn: (icon: string | null) => updateCategoryIcon(category.id, icon),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Couldn't update the icon");
+    },
+  });
+
+  const commit = () => {
+    const trimmed = value.trim();
+    if (trimmed === savedEmoji) return;
+    mutation.mutate(trimmed || null);
+  };
+
+  return (
+    <section>
+      <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        Icon
+      </div>
+      <div className="mt-3 rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center gap-3">
+          <Input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            placeholder="🙂"
+            maxLength={12}
+            className="h-9 w-20 text-center text-lg"
+            aria-label="Category emoji"
+          />
+          {savedEmoji && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={() => {
+                setValue("");
+                mutation.mutate(null);
+              }}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Optional emoji shown next to the name everywhere. Open your
+          system&apos;s emoji picker with Win+. or Ctrl+Cmd+Space.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function ColorSection({ category }: { category: Category }) {
   const queryClient = useQueryClient();
-  const mutation = useMutation({
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => getSettings(),
+  });
+  const customColors = settingsQuery.data?.customCategoryColors ?? [];
+  const [pendingColor, setPendingColor] = useState<string | null>(null);
+
+  const applyMutation = useMutation({
     mutationFn: (color: string) => updateCategoryColor(category.id, color),
     onSuccess: () => {
       // No toast: the swatch ring and every badge recolor immediately.
@@ -502,6 +588,68 @@ function ColorSection({ category }: { category: Category }) {
     },
   });
 
+  const paletteMutation = useMutation({
+    mutationFn: (colors: string[]) =>
+      updateSettings({ customCategoryColors: colors }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Couldn't save the palette");
+    },
+  });
+
+  // Committing on blur (when the native picker closes) avoids saving a
+  // palette entry for every drag tick inside the color dialog.
+  const commitCustomColor = () => {
+    if (!pendingColor) return;
+    const color = pendingColor;
+    setPendingColor(null);
+    applyMutation.mutate(color);
+    const inBuiltIn = CATEGORY_COLOR_PALETTE.some(
+      (c) => c.toLowerCase() === color.toLowerCase()
+    );
+    const inCustom = customColors.some(
+      (c) => c.toLowerCase() === color.toLowerCase()
+    );
+    if (!inBuiltIn && !inCustom) {
+      paletteMutation.mutate([...customColors, color]);
+    }
+  };
+
+  const removeCustomColor = (color: string) => {
+    paletteMutation.mutate(customColors.filter((c) => c !== color));
+  };
+
+  const swatch = (color: string, custom: boolean) => (
+    <span key={color} className="group relative inline-flex">
+      <button
+        type="button"
+        disabled={applyMutation.isPending}
+        onClick={() => applyMutation.mutate(color)}
+        aria-label={`Use ${color}`}
+        className={cn(
+          "h-7 w-7 rounded-full border transition-transform hover:scale-110",
+          category.color.toLowerCase() === color.toLowerCase()
+            ? "border-foreground ring-2 ring-foreground/30"
+            : "border-border"
+        )}
+        style={{ backgroundColor: color }}
+      />
+      {custom && (
+        <button
+          type="button"
+          onClick={() => removeCustomColor(color)}
+          aria-label={`Remove ${color} from palette`}
+          title="Remove from palette"
+          className="absolute -end-1 -top-1 hidden h-3.5 w-3.5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground group-hover:flex"
+        >
+          <Trash2 className="h-2 w-2" />
+        </button>
+      )}
+    </span>
+  );
+
   return (
     <section>
       <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
@@ -509,37 +657,28 @@ function ColorSection({ category }: { category: Category }) {
       </div>
       <div className="mt-3 rounded-xl border border-border bg-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          {CATEGORY_COLOR_PALETTE.map((color) => (
-            <button
-              key={color}
-              type="button"
-              disabled={mutation.isPending}
-              onClick={() => mutation.mutate(color)}
-              aria-label={`Use ${color}`}
-              className={cn(
-                "h-7 w-7 rounded-full border transition-transform hover:scale-110",
-                category.color.toLowerCase() === color.toLowerCase()
-                  ? "border-foreground ring-2 ring-foreground/30"
-                  : "border-border"
-              )}
-              style={{ backgroundColor: color }}
-            />
-          ))}
+          {CATEGORY_COLOR_PALETTE.map((color) => swatch(color, false))}
+          {customColors.map((color) => swatch(color, true))}
           <label
-            title="Custom color"
+            title="Pick a custom color (it joins the palette)"
             className="relative flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:text-foreground"
+            style={
+              pendingColor ? { backgroundColor: pendingColor } : undefined
+            }
           >
             <Palette className="h-3.5 w-3.5" />
             <input
               type="color"
-              value={category.color}
-              onChange={(e) => mutation.mutate(e.target.value)}
+              value={pendingColor ?? category.color}
+              onChange={(e) => setPendingColor(e.target.value)}
+              onBlur={commitCustomColor}
               className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
             />
           </label>
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">
           Used for this category&apos;s badge, charts, and budget cards.
+          Custom picks are saved to the palette; hover one to remove it.
         </p>
       </div>
     </section>

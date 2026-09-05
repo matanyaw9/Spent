@@ -234,6 +234,13 @@ on every row, manual cash entries (add and delete), a per-category color
 picker in settings, and single-row category edits no longer cascade to
 merchant history.
 
+Status 2026-09-05, third wave: transaction dates normalized to
+Israel-local days (fixes rows from the 1st of a month vanishing from
+every month view), category filter folded into the Filters popover with
+removable active-filter chips under the header, click-outside and
+kept-after-action selection, emoji icons on categories (defaults seeded,
+editable per category), and custom colors saved into the palette.
+
 ## Open questions
 
 - Should interest on a loan repayment be split automatically when the

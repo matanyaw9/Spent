@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { Loader2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -726,7 +727,14 @@ function CredentialForm({
               disabled={!valid || testing || saving}
               className="flex-1 rounded-full"
             >
-              {testing ? "Testing..." : "Test connection"}
+              {testing ? (
+                <>
+                  <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                "Test connection"
+              )}
             </Button>
             <Button
               onClick={handleSave}
@@ -736,6 +744,14 @@ function CredentialForm({
               {saving ? "Saving..." : isEdit ? "Save changes" : "Save & continue"}
             </Button>
           </div>
+
+          {testing && (
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              Contacting your bank through a secure browser session. This
+              usually takes a minute or two - hang tight, it hasn&apos;t
+              crashed.
+            </p>
+          )}
 
           <div className="mt-2 flex items-start gap-2 rounded-md bg-muted/40 p-2 text-[11px] text-muted-foreground">
             <span>🔐</span>

@@ -382,12 +382,25 @@ function CredentialsForm({
           onClick={handleTest}
           disabled={!allValid || testing || saving}
         >
-          {testing ? "Testing…" : "Test connection"}
+          {testing ? (
+            <>
+              <Loader2 className="me-1.5 h-3.5 w-3.5 animate-spin" />
+              Testing…
+            </>
+          ) : (
+            "Test connection"
+          )}
         </Button>
         <Button onClick={handleSave} disabled={!allValid || saving || testing}>
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>
+      {testing && (
+        <p className="text-end text-[11px] text-muted-foreground">
+          Contacting your bank through a secure browser session. This usually
+          takes a minute or two - hang tight, it hasn&apos;t crashed.
+        </p>
+      )}
     </div>
   );
 }

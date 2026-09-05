@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
@@ -33,11 +33,13 @@ import {
   Check,
   ArrowDownRight,
   ArrowUpRight,
+  ArrowLeftRight,
   Wallet,
   Tags,
   EyeOff,
   Eye,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useQuery } from "@tanstack/react-query";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import {
@@ -46,6 +48,7 @@ import {
   approveTransactionCategory,
   getCategories,
   setTransactionExcluded,
+  type TransactionsSummary,
 } from "@/lib/api";
 import { toast } from "sonner";
 import { translateCategoryName, translateProviderName } from "@/lib/i18n-data";
@@ -95,6 +98,15 @@ interface TransactionsTableProps {
   sortOrder: SortOrder;
   onSortChange: (field: TransactionSortField) => void;
   isFetching?: boolean;
+  selectedIds: Set<number>;
+  /** "Select all N matching" mode: every filtered row counts as selected. */
+  allMatching: boolean;
+  onSelectRows: (ids: number[], selected: boolean) => void;
+  onSelectAllMatching: () => void;
+  onClearSelection: () => void;
+  notCounted?: TransactionsSummary["notCounted"];
+  notCountedOnly: boolean;
+  onNotCountedOnlyChange: (value: boolean) => void;
 }
 
 const PAGE_SIZE = 50;
@@ -117,6 +129,14 @@ export function TransactionsTable({
   sortOrder,
   onSortChange,
   isFetching = false,
+  selectedIds,
+  allMatching,
+  onSelectRows,
+  onSelectAllMatching,
+  onClearSelection,
+  notCounted,
+  notCountedOnly,
+  onNotCountedOnlyChange,
 }: TransactionsTableProps) {
   const t = useTranslations("transactions");
   const tCat = useTranslations("categoriesSeeded");
@@ -125,6 +145,45 @@ export function TransactionsTable({
   const queryClient = useQueryClient();
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const totalPages = Math.ceil(total / PAGE_SIZE);
+  const lastClickedIndexRef = useRef<number | null>(null);
+
+  const isRowSelected = (id: number) => allMatching || selectedIds.has(id);
+  const pageIds = transactions.map((txn) => txn.id);
+  const selectedOnPage = pageIds.filter(isRowSelected).length;
+  const headerState: boolean | "indeterminate" =
+    selectedOnPage === 0
+      ? false
+      : selectedOnPage === pageIds.length
+        ? true
+        : "indeterminate";
+
+  const handleHeaderCheckbox = () => {
+    lastClickedIndexRef.current = null;
+    if (headerState === true) {
+      onClearSelection();
+    } else {
+      onSelectRows(pageIds, true);
+    }
+  };
+
+  const handleRowCheckbox = (
+    index: number,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    const txn = transactions[index];
+    const nextSelected = !isRowSelected(txn.id);
+    if (event.shiftKey && lastClickedIndexRef.current != null) {
+      const start = Math.min(lastClickedIndexRef.current, index);
+      const end = Math.max(lastClickedIndexRef.current, index);
+      onSelectRows(
+        transactions.slice(start, end + 1).map((row) => row.id),
+        nextSelected
+      );
+    } else {
+      onSelectRows([txn.id], nextSelected);
+    }
+    lastClickedIndexRef.current = index;
+  };
 
   const otherKinds: Record<Kind, Array<{ value: Kind; label: string }>> = {
     expense: [
@@ -437,15 +496,54 @@ export function TransactionsTable({
           </div>
         ) : transactions.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            {search || categoryFilter.length > 0 || accountFilter.length > 0
+            {search ||
+            categoryFilter.length > 0 ||
+            accountFilter.length > 0 ||
+            notCountedOnly
               ? t("emptyWithFilters")
               : t("emptyNoData")}
           </div>
         ) : (
           <>
+            {headerState === true && total > transactions.length && (
+              <div className="mb-3 flex items-center justify-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                {allMatching ? (
+                  <>
+                    <span>{t("bulkAllMatchingSelected", { total })}</span>
+                    <button
+                      type="button"
+                      className="font-medium text-foreground underline-offset-2 hover:underline"
+                      onClick={onClearSelection}
+                    >
+                      {t("bulkClearSelection")}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      {t("bulkPageSelected", { count: transactions.length })}
+                    </span>
+                    <button
+                      type="button"
+                      className="font-medium text-foreground underline-offset-2 hover:underline"
+                      onClick={onSelectAllMatching}
+                    >
+                      {t("bulkSelectAllMatching", { total })}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[36px]">
+                    <Checkbox
+                      checked={headerState}
+                      onClick={handleHeaderCheckbox}
+                      aria-label={t("bulkSelectAllOnPage")}
+                    />
+                  </TableHead>
                   <TableHead className="w-[32px]" />
                   <SortableTableHead
                     label={t("headerDate")}
@@ -501,8 +599,11 @@ export function TransactionsTable({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {transactions.map((txn) => {
+                {transactions.map((txn, index) => {
                   const isIncome = txn.chargedAmount > 0;
+                  const isTransfer = txn.kind === "transfer";
+                  const notCountedRow = txn.isExcluded || isTransfer;
+                  const selected = isRowSelected(txn.id);
                   const directionColor = isIncome
                     ? "var(--status-on-track)"
                     : "var(--status-over)";
@@ -515,17 +616,31 @@ export function TransactionsTable({
                       key={txn.id}
                       className={cn(
                         "transition-colors duration-200 hover:bg-muted/50",
-                        txn.isExcluded && "opacity-50",
+                        notCountedRow && "opacity-50",
+                        selected && "bg-accent/40 hover:bg-accent/50",
                       )}
                     >
                       <TableCell>
-                        <div style={{ color: directionColor }}>
-                          {isIncome ? (
-                            <ArrowUpRight className="h-4 w-4" />
-                          ) : (
-                            <ArrowDownRight className="h-4 w-4" />
-                          )}
-                        </div>
+                        <Checkbox
+                          checked={selected}
+                          onClick={(e) => handleRowCheckbox(index, e)}
+                          aria-label={t("bulkSelectRow")}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {isTransfer ? (
+                          <div className="text-muted-foreground">
+                            <ArrowLeftRight className="h-4 w-4" />
+                          </div>
+                        ) : (
+                          <div style={{ color: directionColor }}>
+                            {isIncome ? (
+                              <ArrowUpRight className="h-4 w-4" />
+                            ) : (
+                              <ArrowDownRight className="h-4 w-4" />
+                            )}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-sm tabular-nums text-muted-foreground">
                         {formatDate(txn.date)}
@@ -554,6 +669,27 @@ export function TransactionsTable({
                                   {txn.aiConfidence}/7
                                 </span>
                               )}
+                            </span>
+                          )}
+                          {txn.isExcluded && (
+                            <button
+                              type="button"
+                              onClick={() => handleExcludeToggle(txn, false)}
+                              disabled={updatingId === txn.id}
+                              title={t("chipExcludedTooltip")}
+                              className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            >
+                              <EyeOff className="h-3 w-3" />
+                              {t("chipExcluded")}
+                            </button>
+                          )}
+                          {!txn.isExcluded && isTransfer && (
+                            <span
+                              title={t("chipTransferTooltip")}
+                              className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                            >
+                              <ArrowLeftRight className="h-3 w-3" />
+                              {t("chipTransfer")}
                             </span>
                           )}
                         </div>
@@ -640,8 +776,15 @@ export function TransactionsTable({
                         />
                       </TableCell>
                       <TableCell
-                        className="text-end font-medium tabular-nums"
-                        style={{ color: directionColor }}
+                        className={cn(
+                          "text-end font-medium tabular-nums",
+                          notCountedRow && "line-through decoration-1",
+                        )}
+                        style={{
+                          color: notCountedRow
+                            ? "var(--muted-foreground)"
+                            : directionColor,
+                        }}
                       >
                         {formatCurrency(txn.chargedAmount, "ILS", locale)}
                       </TableCell>
@@ -725,6 +868,30 @@ export function TransactionsTable({
               </div>
             )}
           </>
+        )}
+        {notCounted && (notCounted.count > 0 || notCountedOnly) && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5">
+            <span className="text-xs text-muted-foreground">
+              {t("notCountedSummary", {
+                count: notCounted.count,
+                amount: formatCurrency(notCounted.total, "ILS", locale),
+              })}
+              {" · "}
+              {t("notCountedBreakdown", {
+                excluded: notCounted.excludedCount,
+                transfers: notCounted.transferCount,
+              })}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-muted-foreground"
+              onClick={() => onNotCountedOnlyChange(!notCountedOnly)}
+            >
+              {notCountedOnly ? t("notCountedShowAll") : t("notCountedShow")}
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>

@@ -157,7 +157,7 @@ export function updateSettings(settings: Partial<AppSettings>) {
   });
 }
 
-export type TransactionKindFilter = "expense" | "income" | "all";
+export type TransactionKindFilter = "expense" | "income" | "transfer" | "all";
 export type TransactionKind = "expense" | "income" | "transfer";
 export type CategoryKindFilter = "expense" | "income";
 
@@ -175,6 +175,12 @@ export interface TransactionsSummary {
   net: number;
   topMerchants: { description: string; total: number; count: number }[];
   pendingReviewCount: number;
+  notCounted: {
+    count: number;
+    total: number;
+    excludedCount: number;
+    transferCount: number;
+  };
 }
 
 export function getTransactionsSummary(params: {
@@ -204,6 +210,7 @@ export function getTransactions(params: {
   kind?: TransactionKindFilter;
   provider?: string;
   credentialIds?: number[];
+  notCounted?: boolean;
 }) {
   const searchParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -219,6 +226,36 @@ export function getTransactions(params: {
   });
   return fetchJSON<{ transactions: TransactionWithCategory[]; total: number }>(
     `/api/transactions?${searchParams}`
+  );
+}
+
+export interface BulkTransactionFilter {
+  from?: string;
+  to?: string;
+  search?: string;
+  categoryIds?: number[];
+  credentialIds?: number[];
+  kind?: TransactionKindFilter;
+  notCounted?: boolean;
+}
+
+export type BulkTransactionAction =
+  | { type: "category"; categoryId: number }
+  | { type: "kind"; kind: TransactionKind }
+  | { type: "exclude"; excluded: boolean };
+
+/** Apply one action to many transactions: explicit ids, or a whole filter. */
+export function bulkUpdateTransactions(
+  target: { ids: number[] } | { filter: BulkTransactionFilter },
+  action: BulkTransactionAction
+) {
+  return fetchJSON<{ updated: number; skipped: number }>(
+    "/api/transactions/bulk",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...target, action }),
+    }
   );
 }
 

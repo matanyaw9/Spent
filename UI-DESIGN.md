@@ -214,6 +214,15 @@ Each phase is shippable on its own; the order minimizes rework because
 the bulk bar (1) is the surface that rules (2) and pockets (4) plug
 into.
 
+Status 2026-09-05: Phase 1 shipped. Row selection (shift-click ranges,
+select-all-matching across pages, Esc to clear), the floating bulk bar
+(categorize / set kind / exclude / include), kind-based KPI totals on
+the transactions page, the not-counted footer with a review toggle,
+reason chips on excluded and transfer rows, and goal 5's loading
+feedback on connection tests. Arrow-key roving focus from the Selection
+spec is deferred to a polish pass (checkboxes are fully keyboard
+reachable via Tab/Space).
+
 ## Open questions
 
 - Should interest on a loan repayment be split automatically when the

@@ -19,7 +19,7 @@ import {
   isTransactionSortField,
   TRANSACTION_SORT_SQL,
 } from "@/lib/transaction-sort";
-export type TransactionKindFilter = "expense" | "income" | "all";
+export type TransactionKindFilter = "expense" | "income" | "transfer" | "all";
 
 interface RawTransaction {
   accountNumber: string;
@@ -286,7 +286,7 @@ export function applyCategoryToMerchant(
   return ids.length;
 }
 
-interface QueryParams {
+export interface TransactionListFilter {
   from?: string;
   to?: string;
   search?: string;
@@ -297,15 +297,20 @@ interface QueryParams {
    * across all children of a parent category.
    */
   categoryIds?: number[];
-  sort?: string;
-  order?: "asc" | "desc";
-  limit?: number;
-  offset?: number;
   kind?: TransactionKindFilter;
   provider?: string;
   /** @deprecated Use credentialIds */
   credentialId?: number;
   credentialIds?: number[];
+  /** Only rows that don't count toward totals: excluded or transfers. */
+  notCounted?: boolean;
+}
+
+interface QueryParams extends TransactionListFilter {
+  sort?: string;
+  order?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
 }
 
 function appendCredentialIdsFilter(
@@ -338,11 +343,10 @@ const TRANSACTION_LIST_SELECT = `
          bc.label AS account_label
   ${TRANSACTION_LIST_FROM}`;
 
-export function queryTransactions(
+function buildListConditions(
   workspaceId: number,
-  params: QueryParams
-): { transactions: TransactionWithCategory[]; total: number } {
-  const db = getDb();
+  params: TransactionListFilter
+): { conditions: string[]; values: (string | number)[] } {
   const conditions: string[] = ["t.workspace_id = ?"];
   const values: (string | number)[] = [workspaceId];
 
@@ -367,11 +371,15 @@ export function queryTransactions(
     conditions.push("t.category_id = ?");
     values.push(params.category);
   }
+  // Filter by the row's kind, not the amount sign, so the list agrees with
+  // the kind-based totals (a transfer never shows under Income/Expenses).
   const kind: TransactionKindFilter = params.kind ?? "all";
-  if (kind === "income") {
-    conditions.push("t.charged_amount > 0");
-  } else if (kind === "expense") {
-    conditions.push("t.charged_amount < 0");
+  if (kind !== "all") {
+    conditions.push("t.kind = ?");
+    values.push(kind);
+  }
+  if (params.notCounted) {
+    conditions.push("(t.is_excluded = 1 OR t.kind = 'transfer')");
   }
   if (params.provider) {
     conditions.push("t.provider = ?");
@@ -385,6 +393,32 @@ export function queryTransactions(
         : undefined;
   appendCredentialIdsFilter(conditions, values, credentialIds, "t.");
 
+  return { conditions, values };
+}
+
+/**
+ * Resolve a list filter to concrete transaction ids. Used by bulk actions
+ * when the user selects "all matching" across pages.
+ */
+export function resolveFilteredTransactionIds(
+  workspaceId: number,
+  params: TransactionListFilter
+): number[] {
+  const { conditions, values } = buildListConditions(workspaceId, params);
+  const rows = getDb()
+    .prepare(
+      `SELECT t.id FROM transactions t WHERE ${conditions.join(" AND ")}`
+    )
+    .all(...values) as { id: number }[];
+  return rows.map((r) => r.id);
+}
+
+export function queryTransactions(
+  workspaceId: number,
+  params: QueryParams
+): { transactions: TransactionWithCategory[]; total: number } {
+  const db = getDb();
+  const { conditions, values } = buildListConditions(workspaceId, params);
   const where = `WHERE ${conditions.join(" AND ")}`;
 
   const sortSql = resolveSortSql(params.sort);
@@ -774,6 +808,118 @@ export function setTransactionKind(
     .run(kind, workspaceId, id);
 }
 
+/** Chunk ids so IN (...) never exceeds SQLite's bound-variable limit. */
+function chunkIds(ids: number[], size = 500): number[][] {
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += size) {
+    chunks.push(ids.slice(i, i + size));
+  }
+  return chunks;
+}
+
+export function bulkSetTransactionKind(
+  workspaceId: number,
+  ids: number[],
+  kind: "expense" | "income" | "transfer"
+): number {
+  if (ids.length === 0) return 0;
+  const db = getDb();
+  let updated = 0;
+  db.transaction(() => {
+    for (const chunk of chunkIds(ids)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = db
+        .prepare(
+          `UPDATE transactions
+           SET kind = ?, kind_source = 'user', updated_at = datetime('now')
+           WHERE workspace_id = ? AND id IN (${placeholders})`
+        )
+        .run(kind, workspaceId, ...chunk);
+      updated += result.changes;
+    }
+  })();
+  return updated;
+}
+
+export function bulkSetTransactionExcluded(
+  workspaceId: number,
+  ids: number[],
+  excluded: boolean
+): number {
+  if (ids.length === 0) return 0;
+  const db = getDb();
+  let updated = 0;
+  db.transaction(() => {
+    for (const chunk of chunkIds(ids)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = db
+        .prepare(
+          `UPDATE transactions
+           SET is_excluded = ?, updated_at = datetime('now')
+           WHERE workspace_id = ? AND id IN (${placeholders})`
+        )
+        .run(excluded ? 1 : 0, workspaceId, ...chunk);
+      updated += result.changes;
+    }
+  })();
+  return updated;
+}
+
+export interface BulkCategoryResult {
+  updated: number;
+  skipped: number;
+  /** Distinct merchant descriptions among the updated rows. */
+  merchants: string[];
+}
+
+/**
+ * Assign a category to many transactions at once. Only rows whose kind
+ * matches the category's kind are touched; the rest are reported as
+ * skipped so the UI can say so. Unlike the single-row flow, this never
+ * cascades to unselected transactions of the same merchant: a bulk edit
+ * should change exactly what the user selected.
+ */
+export function bulkAssignCategory(
+  workspaceId: number,
+  ids: number[],
+  categoryId: number,
+  categoryKind: "expense" | "income"
+): BulkCategoryResult {
+  if (ids.length === 0) return { updated: 0, skipped: 0, merchants: [] };
+  const db = getDb();
+  let updated = 0;
+  const merchants = new Set<string>();
+
+  db.transaction(() => {
+    for (const chunk of chunkIds(ids)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = db
+        .prepare(
+          `SELECT DISTINCT description FROM transactions
+           WHERE workspace_id = ? AND kind = ? AND id IN (${placeholders})`
+        )
+        .all(workspaceId, categoryKind, ...chunk) as { description: string }[];
+      for (const row of rows) merchants.add(row.description);
+
+      const result = db
+        .prepare(
+          `UPDATE transactions
+           SET category_id = ?, category_source = 'user', needs_review = 0,
+               updated_at = datetime('now')
+           WHERE workspace_id = ? AND kind = ? AND id IN (${placeholders})`
+        )
+        .run(categoryId, workspaceId, categoryKind, ...chunk);
+      updated += result.changes;
+    }
+  })();
+
+  return {
+    updated,
+    skipped: ids.length - updated,
+    merchants: [...merchants],
+  };
+}
+
 export function setTransactionNeedsReview(
   workspaceId: number,
   id: number,
@@ -848,6 +994,13 @@ export interface TransactionsSummary {
   net: number;
   topMerchants: { description: string; total: number; count: number }[];
   pendingReviewCount: number;
+  /** Rows in range that don't count toward the totals above. */
+  notCounted: {
+    count: number;
+    total: number;
+    excludedCount: number;
+    transferCount: number;
+  };
 }
 
 export interface TransactionsSummaryParams {
@@ -880,33 +1033,36 @@ export function getTransactionsSummary(
   appendCredentialIdsFilter(baseConditions, baseValues, summaryCredentialIds);
   const baseWhere = baseConditions.join(" AND ");
 
+  // Income and expenses go by the row's kind, matching the dashboard and
+  // budget math. Transfers count in neither; signed sums let a refund
+  // (positive amount on an expense row) reduce spending instead of adding
+  // to it.
   const incomeAgg = db
     .prepare(
       `SELECT COALESCE(SUM(charged_amount), 0) as total, COUNT(*) as count
        FROM transactions
-       WHERE ${baseWhere} AND charged_amount > 0`
+       WHERE ${baseWhere} AND kind = 'income'`
     )
     .get(...baseValues) as { total: number; count: number };
 
   const expenseAgg = db
     .prepare(
-      `SELECT COALESCE(SUM(ABS(charged_amount)), 0) as total, COUNT(*) as count
+      `SELECT COALESCE(SUM(-charged_amount), 0) as total, COUNT(*) as count
        FROM transactions
-       WHERE ${baseWhere} AND charged_amount < 0`
+       WHERE ${baseWhere} AND kind = 'expense'`
     )
     .get(...baseValues) as { total: number; count: number };
 
-  const pickLargest = (sign: "income" | "expense"): TransactionWithCategory | null => {
-    const cmp = sign === "income" ? "> 0" : "< 0";
+  const pickLargest = (kind: "income" | "expense"): TransactionWithCategory | null => {
     const tConditions = [
       "t.workspace_id = ?",
       "t.date >= ?",
       "t.date <= ?",
       "t.status = 'completed'",
       "t.is_excluded = 0",
-      `t.charged_amount ${cmp}`,
+      "t.kind = ?",
     ];
-    const tValues: (string | number)[] = [workspaceId, from, to];
+    const tValues: (string | number)[] = [workspaceId, from, to, kind];
     appendCredentialIdsFilter(tConditions, tValues, summaryCredentialIds, "t.");
     const row = db
       .prepare(
@@ -922,15 +1078,37 @@ export function getTransactionsSummary(
   const topMerchantsRows = db
     .prepare(
       `SELECT description,
-              SUM(ABS(charged_amount)) as total,
+              SUM(-charged_amount) as total,
               COUNT(*) as count
        FROM transactions
-       WHERE ${baseWhere} AND charged_amount < 0
+       WHERE ${baseWhere} AND kind = 'expense'
        GROUP BY description
        ORDER BY total DESC
        LIMIT 5`
     )
     .all(...baseValues) as { description: string; total: number; count: number }[];
+
+  // Same range and account scope, but the complement of the base filter:
+  // rows the totals above deliberately leave out.
+  const ncConditions = ["workspace_id = ?", "date >= ?", "date <= ?", "status = 'completed'"];
+  const ncValues: (string | number)[] = [workspaceId, from, to];
+  appendCredentialIdsFilter(ncConditions, ncValues, summaryCredentialIds);
+  const notCounted = db
+    .prepare(
+      `SELECT COUNT(*) as count,
+              COALESCE(SUM(ABS(charged_amount)), 0) as total,
+              COALESCE(SUM(is_excluded), 0) as excludedCount,
+              COALESCE(SUM(CASE WHEN is_excluded = 0 AND kind = 'transfer' THEN 1 ELSE 0 END), 0) as transferCount
+       FROM transactions
+       WHERE ${ncConditions.join(" AND ")}
+         AND (is_excluded = 1 OR kind = 'transfer')`
+    )
+    .get(...ncValues) as {
+    count: number;
+    total: number;
+    excludedCount: number;
+    transferCount: number;
+  };
 
   const pendingReview = db
     .prepare(
@@ -954,6 +1132,7 @@ export function getTransactionsSummary(
     net: incomeAgg.total - expenseAgg.total,
     topMerchants: topMerchantsRows,
     pendingReviewCount: pendingReview.count,
+    notCounted,
   };
 }
 

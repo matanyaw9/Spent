@@ -33,6 +33,7 @@ export function KpiCards({ summary, loading }: KpiCardsProps) {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <KpiCard
         label={t("kpiIncome")}
+        hint={t("kpiIncomeHint")}
         amount={income}
         meta={countMeta(incomeCount)}
         icon={<ArrowUpRight className="h-4 w-4" />}
@@ -43,6 +44,7 @@ export function KpiCards({ summary, loading }: KpiCardsProps) {
       />
       <KpiCard
         label={t("kpiExpenses")}
+        hint={t("kpiExpensesHint")}
         amount={expense}
         meta={countMeta(expenseCount)}
         icon={<ArrowDownRight className="h-4 w-4" />}
@@ -53,6 +55,7 @@ export function KpiCards({ summary, loading }: KpiCardsProps) {
       />
       <KpiCard
         label={netPositive ? t("kpiNetSaved") : t("kpiNetOverspend")}
+        hint={t("kpiNetHint")}
         amount={Math.abs(net)}
         meta={netPositive ? t("kpiIncomeExceeded") : t("kpiExpensesExceeded")}
         icon={
@@ -87,6 +90,7 @@ export function KpiCards({ summary, loading }: KpiCardsProps) {
 
 interface KpiCardProps {
   label: string;
+  hint?: string;
   amount: number;
   meta: string;
   icon: React.ReactNode;
@@ -98,6 +102,7 @@ interface KpiCardProps {
 
 function KpiCard({
   label,
+  hint,
   amount,
   meta,
   icon,
@@ -107,7 +112,7 @@ function KpiCard({
   locale,
 }: KpiCardProps) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-5">
+    <div className="rounded-2xl border border-border bg-card p-5" title={hint}>
       <div className="flex items-center justify-between">
         <div className="text-xs font-bold uppercase tracking-[0.08em] text-muted-foreground">
           {label}

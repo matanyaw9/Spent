@@ -1,7 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useLocale, useTranslations } from "next-intl";
 import { PageHeader } from "@/components/layout/app-shell";
 import { TransactionsTable } from "@/components/dashboard/transactions-table";
@@ -9,13 +14,15 @@ import { PeriodSelector } from "@/components/dashboard/period-selector";
 import { AINotConnectedBanner } from "@/components/ai-not-connected-banner";
 import { KpiCards } from "./kpi-cards";
 import { WidgetsRow } from "./widgets-row";
+import { BulkActionBar } from "./bulk-action-bar";
 import {
+  bulkUpdateTransactions,
   getCategories,
   getTransactions,
   getTransactionsSummary,
   listIntegrations,
 } from "@/lib/api";
-import type { TransactionKindFilter } from "@/lib/api";
+import type { BulkTransactionAction, TransactionKindFilter } from "@/lib/api";
 import { expandCategoryFilterIds } from "@/lib/transaction-filters";
 import {
   nextSortState,
@@ -40,6 +47,11 @@ export function TransactionsPage() {
   const [kind, setKind] = useState<TransactionKindFilter>("all");
   const [sortField, setSortField] = useState<TransactionSortField>("date");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
+  const [notCountedOnly, setNotCountedOnly] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [allMatching, setAllMatching] = useState(false);
+  const [bulkPending, setBulkPending] = useState(false);
+  const queryClient = useQueryClient();
 
   const filterOptions: { value: TransactionKindFilter; label: string }[] = [
     { value: "all", label: t("filterAll") },
@@ -48,6 +60,24 @@ export function TransactionsPage() {
   ];
 
   const { from, to } = getMonthRange(selectedDate);
+
+  // A selection only makes sense against the filter it was made under, so
+  // drop it whenever the filter changes (guarded update during render).
+  const filterKey = JSON.stringify([
+    from,
+    to,
+    search,
+    categoryFilter,
+    accountFilter,
+    kind,
+    notCountedOnly,
+  ]);
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setSelectedIds(new Set());
+    setAllMatching(false);
+  }
 
   const allCategoriesQuery = useQuery({
     queryKey: ["categories"],
@@ -75,6 +105,7 @@ export function TransactionsPage() {
       kind,
       sortField,
       sortOrder,
+      notCountedOnly,
     ],
     queryFn: () =>
       getTransactions({
@@ -89,6 +120,7 @@ export function TransactionsPage() {
         kind,
         sort: sortField,
         order: sortOrder,
+        notCounted: notCountedOnly || undefined,
       }),
     placeholderData: keepPreviousData,
   });
@@ -105,6 +137,92 @@ export function TransactionsPage() {
   });
 
   const monthLabel = formatMonthLabel(selectedDate, locale);
+
+  const pageRows = transactionsQuery.data?.transactions ?? [];
+  const totalMatching = transactionsQuery.data?.total ?? 0;
+  const hasSelection = allMatching || selectedIds.size > 0;
+  const bulkCount = allMatching ? totalMatching : selectedIds.size;
+
+  useEffect(() => {
+    if (!hasSelection) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedIds(new Set());
+        setAllMatching(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [hasSelection]);
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setAllMatching(false);
+  };
+
+  const handleSelectRows = (ids: number[], selected: boolean) => {
+    setSelectedIds((prev) => {
+      // Leaving "all matching" mode turns the abstract selection into a
+      // concrete one: the visible page minus whatever was just unticked.
+      const next = allMatching
+        ? new Set(pageRows.map((row) => row.id))
+        : new Set(prev);
+      for (const id of ids) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+    if (!selected && allMatching) setAllMatching(false);
+  };
+
+  const handleBulkAction = async (action: BulkTransactionAction) => {
+    setBulkPending(true);
+    try {
+      const target = allMatching
+        ? {
+            filter: {
+              from,
+              to,
+              search: search || undefined,
+              categoryIds: expandedCategoryIds?.length
+                ? expandedCategoryIds
+                : undefined,
+              credentialIds:
+                accountFilter.length > 0 ? accountFilter : undefined,
+              kind,
+              notCounted: notCountedOnly || undefined,
+            },
+          }
+        : { ids: [...selectedIds] };
+      const result = await bulkUpdateTransactions(target, action);
+      for (const key of [
+        "transactions",
+        "summary",
+        "transactions-summary",
+        "categories",
+        "home",
+        "excluded-merchants",
+      ]) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      if (result.skipped > 0) {
+        toast.success(
+          t("bulkAppliedPartialToast", {
+            updated: result.updated,
+            skipped: result.skipped,
+          })
+        );
+      } else {
+        toast.success(t("bulkAppliedToast", { count: result.updated }));
+      }
+      clearSelection();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBulkPending(false);
+    }
+  };
 
   const summaryInitialLoading =
     summaryQuery.isPending && summaryQuery.data === undefined;
@@ -187,8 +305,28 @@ export function TransactionsPage() {
           }}
           page={page}
           onPageChange={setPage}
+          selectedIds={selectedIds}
+          allMatching={allMatching}
+          onSelectRows={handleSelectRows}
+          onSelectAllMatching={() => setAllMatching(true)}
+          onClearSelection={clearSelection}
+          notCounted={summaryQuery.data?.notCounted}
+          notCountedOnly={notCountedOnly}
+          onNotCountedOnlyChange={(value) => {
+            setNotCountedOnly(value);
+            setPage(0);
+          }}
         />
       </div>
+
+      {hasSelection && bulkCount > 0 && (
+        <BulkActionBar
+          count={bulkCount}
+          pending={bulkPending}
+          onAction={handleBulkAction}
+          onClear={clearSelection}
+        />
+      )}
     </>
   );
 }

@@ -6,7 +6,7 @@ import {
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
 
 function parseKind(raw: string | null): TransactionKindFilter | undefined {
-  if (raw === "expense" || raw === "income" || raw === "all") {
+  if (raw === "expense" || raw === "income" || raw === "transfer" || raw === "all") {
     return raw;
   }
   return undefined;
@@ -45,6 +45,7 @@ export async function GET(request: Request) {
       ? Number(searchParams.get("offset"))
       : undefined,
     kind: parseKind(searchParams.get("kind")),
+    notCounted: searchParams.get("notCounted") === "true" ? true : undefined,
     provider: searchParams.get("provider") ?? undefined,
     credentialIds: credentialIds.length > 0 ? credentialIds : undefined,
   });

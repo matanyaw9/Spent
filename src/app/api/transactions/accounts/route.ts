@@ -59,9 +59,9 @@ export async function PUT(request: Request) {
   if (body.billingDay !== undefined) {
     if (body.billingDay !== null) {
       const day = Number(body.billingDay);
-      if (!Number.isInteger(day) || day < 1 || day > 28) {
+      if (!Number.isInteger(day) || day < 1 || day > 31) {
         return NextResponse.json(
-          { error: "billingDay must be 1-28 or null" },
+          { error: "billingDay must be 1-31 or null" },
           { status: 400 }
         );
       }

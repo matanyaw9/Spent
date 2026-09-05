@@ -265,6 +265,16 @@ keep the selection (only select-all-matching resets), and the checkbox
 column appears only while something is selected; a row click starts a
 selection.
 
+Status 2026-09-05, sixth wave: numberless card-billing lines (a company
+keyword with no card number) now count as flagged spending instead of
+silently becoming transfers, because the keyword can't say WHICH card
+was billed and an untracked card's aggregate is the only record of that
+spending. Amount and date filters became plain inline inputs (no
+dropdowns); not-counted is a small select; billing day is a number
+input (1-31). The category picker shows the tree with indented
+sub-categories when browsing. The not-counted footer FYI is gone; the
+filter bar covers it.
+
 ## Open questions
 
 - Should interest on a loan repayment be split automatically when the

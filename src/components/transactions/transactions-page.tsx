@@ -350,16 +350,6 @@ export function TransactionsPage() {
           onSelectRows={handleSelectRows}
           onSelectAllMatching={() => setAllMatching(true)}
           onClearSelection={clearSelection}
-          notCounted={summaryQuery.data?.notCounted}
-          duplicates={summaryQuery.data?.duplicates}
-          notCountedOnly={advancedFilters.notCounted === "only"}
-          onNotCountedOnlyChange={(value) => {
-            setAdvancedFilters((prev) => ({
-              ...prev,
-              notCounted: value ? "only" : "hidden",
-            }));
-            setPage(0);
-          }}
           cardNicknames={cardNicknames}
         />
         </div>

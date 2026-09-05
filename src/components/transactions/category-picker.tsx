@@ -109,6 +109,42 @@ export function CategoryPicker({
     onSelect(category);
   };
 
+  const renderRow = (cat: Category, depth: number) => (
+    <button
+      key={cat.id}
+      type="button"
+      onClick={() => finish(cat)}
+      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+      style={{ paddingInlineStart: 8 + depth * 16 }}
+    >
+      <div
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{ backgroundColor: cat.color }}
+      />
+      <span className="truncate">
+        {categoryEmoji(cat.icon) && (
+          <span className="me-1">{categoryEmoji(cat.icon)}</span>
+        )}
+        {translateCategoryName(cat.name, tCat)}
+      </span>
+    </button>
+  );
+
+  // Browsing (no query): the full tree with sub-categories indented under
+  // their parents. Searching flattens to matches.
+  const renderTree = (
+    cats: Category[],
+    parentId: number | null,
+    depth: number
+  ): React.ReactNode[] =>
+    cats
+      .filter((c) => c.parentId === parentId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .flatMap((cat) => [
+        renderRow(cat, depth),
+        ...renderTree(cats, cat.id, depth + 1),
+      ]);
+
   const handleCreate = async (kind: CategoryKind) => {
     if (creating || !trimmed) return;
     setCreating(true);
@@ -177,25 +213,9 @@ export function CategoryPicker({
                   {group.label}
                 </div>
               )}
-              {group.categories.map((cat) => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => finish(cat)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent"
-                >
-                  <div
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: cat.color }}
-                  />
-                  <span className="truncate">
-                    {categoryEmoji(cat.icon) && (
-                      <span className="me-1">{categoryEmoji(cat.icon)}</span>
-                    )}
-                    {translateCategoryName(cat.name, tCat)}
-                  </span>
-                </button>
-              ))}
+              {trimmed
+                ? group.categories.map((cat) => renderRow(cat, 0))
+                : renderTree(listFor(group.kind), null, 0)}
             </div>
           ))}
           {visibleMatches.length === 0 && !showCreate && (

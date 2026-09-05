@@ -48,7 +48,6 @@ import {
   approveTransactionCategory,
   deleteTransaction,
   setTransactionExcluded,
-  type TransactionsSummary,
 } from "@/lib/api";
 import {
   Dialog,
@@ -94,10 +93,6 @@ interface TransactionsTableProps {
   onSelectRows: (ids: number[], selected: boolean) => void;
   onSelectAllMatching: () => void;
   onClearSelection: () => void;
-  notCounted?: TransactionsSummary["notCounted"];
-  duplicates?: TransactionsSummary["duplicates"];
-  notCountedOnly: boolean;
-  onNotCountedOnlyChange: (value: boolean) => void;
   /** account_number to user nickname, for the source column. */
   cardNicknames: ReadonlyMap<string, string>;
 }
@@ -124,10 +119,6 @@ export function TransactionsTable({
   onSelectRows,
   onSelectAllMatching,
   onClearSelection,
-  notCounted,
-  duplicates,
-  notCountedOnly,
-  onNotCountedOnlyChange,
   cardNicknames,
 }: TransactionsTableProps) {
   const t = useTranslations("transactions");
@@ -362,7 +353,7 @@ export function TransactionsTable({
           </div>
         ) : transactions.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            {search || filtersActive || notCountedOnly
+            {search || filtersActive
               ? t("emptyWithFilters")
               : t("emptyNoData")}
           </div>
@@ -762,42 +753,6 @@ export function TransactionsTable({
               </div>
             )}
           </>
-        )}
-        {notCounted &&
-          (notCounted.count > 0 ||
-            notCountedOnly ||
-            (duplicates?.count ?? 0) > 0) && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5">
-            <span className="text-xs text-muted-foreground">
-              {t("notCountedSummary", {
-                count: notCounted.count,
-                amount: formatCurrency(notCounted.total, "ILS", locale),
-              })}
-              {" · "}
-              {t("notCountedBreakdown", {
-                excluded: notCounted.excludedCount,
-                transfers: notCounted.transferCount,
-              })}
-              {duplicates && duplicates.count > 0 && (
-                <span className="text-muted-foreground/60">
-                  {" · "}
-                  {t("duplicatesHidden", {
-                    count: duplicates.count,
-                    amount: formatCurrency(duplicates.total, "ILS", locale),
-                  })}
-                </span>
-              )}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs text-muted-foreground"
-              onClick={() => onNotCountedOnlyChange(!notCountedOnly)}
-            >
-              {notCountedOnly ? t("notCountedShowAll") : t("notCountedShow")}
-            </Button>
-          </div>
         )}
       </CardContent>
       <Dialog

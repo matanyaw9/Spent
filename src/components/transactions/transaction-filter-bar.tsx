@@ -1,21 +1,16 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import {
-  Banknote,
-  CalendarRange,
-  ChevronDown,
-  CreditCard,
-  EyeOff,
-  Tags,
-} from "lucide-react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { CreditCard, EyeOff, Tags } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ProviderBadge } from "@/components/setup/provider-badge";
 import {
   TransactionMultiFilter,
@@ -29,7 +24,6 @@ import {
   toggleCategoryFilterSelection,
 } from "@/lib/transaction-filters";
 import { categoryEmoji } from "@/lib/category-emoji";
-import { formatCurrency } from "@/lib/formatters";
 import { BANK_PROVIDERS, type Category } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { TransactionAccount, TransactionKindFilter } from "@/lib/api";
@@ -72,52 +66,6 @@ function localDay(daysAgo = 0): string {
   const d = new Date();
   d.setDate(d.getDate() - daysAgo);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-const TRIGGER_CLASS =
-  "flex h-8 items-center justify-between gap-1 rounded-lg border border-input bg-transparent py-2 pe-2 ps-2.5 text-sm transition-colors outline-none select-none hover:bg-accent/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
-
-function BarPopover({
-  icon: Icon,
-  label,
-  displayValue,
-  active,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  displayValue: string;
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger
-        className={TRIGGER_CLASS}
-        title={`${label}: ${displayValue}`}
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-xs">
-            <span className="text-muted-foreground">{label}</span>
-            <span className="text-muted-foreground">: </span>
-            <span
-              className={cn(
-                "font-medium",
-                active ? "text-foreground" : "text-muted-foreground"
-              )}
-            >
-              {displayValue}
-            </span>
-          </span>
-        </div>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-60" />
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-64 space-y-2 p-3">
-        {children}
-      </PopoverContent>
-    </Popover>
-  );
 }
 
 interface TransactionFilterBarProps {
@@ -201,7 +149,7 @@ export function TransactionFilterBar({
               "flex items-center gap-2",
               hasChildren && "font-semibold"
             )}
-            style={{ paddingInlineStart: depth > 0 ? depth * 12 : 0 }}
+            style={{ paddingInlineStart: depth > 0 ? depth * 16 : 0 }}
           >
             <div
               className="h-2 w-2 shrink-0 rounded-full"
@@ -237,38 +185,11 @@ export function TransactionFilterBar({
     (count) => t("filterSelectedCount", { count })
   );
 
-  // --- Amount ---
-  const amountDisplay =
-    value.amountMin && value.amountMax
-      ? `${formatCurrency(Number(value.amountMin))} – ${formatCurrency(Number(value.amountMax))}`
-      : value.amountMin
-        ? `≥ ${formatCurrency(Number(value.amountMin))}`
-        : value.amountMax
-          ? `≤ ${formatCurrency(Number(value.amountMax))}`
-          : t("filterAny");
-
   // --- Dates ---
-  const datesActive = Boolean(value.dateFrom || value.dateTo);
-  const datesDisplay = datesActive
-    ? `${value.dateFrom || "…"} – ${value.dateTo || "…"}`
-    : t("filterDatesMonth");
   const prefillDates = () => {
     if (value.dateFrom || value.dateTo) return;
     set({ dateFrom: localDay(30), dateTo: localDay(0) });
   };
-
-  // --- Not counted ---
-  const notCountedOptions: {
-    filterValue: AdvancedFilters["notCounted"];
-    label: string;
-  }[] = [
-    { filterValue: "hidden", label: t("filterNotCountedHidden") },
-    { filterValue: "all", label: t("filterNotCountedAll") },
-    { filterValue: "only", label: t("filterNotCountedOnly") },
-  ];
-  const notCountedDisplay =
-    notCountedOptions.find((o) => o.filterValue === value.notCounted)?.label ??
-    "";
 
   const anyActive =
     countActiveAdvancedFilters(value) > 0 ||
@@ -356,93 +277,72 @@ export function TransactionFilterBar({
         </TransactionMultiFilter>
       )}
 
-      <BarPopover
-        icon={Banknote}
-        label={t("filterAmountLabel")}
-        displayValue={amountDisplay}
-        active={Boolean(value.amountMin || value.amountMax)}
-      >
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={0}
-            inputMode="decimal"
-            placeholder={t("filterAmountMin")}
-            value={value.amountMin}
-            onChange={(e) => set({ amountMin: e.target.value })}
-            className="h-8"
-          />
-          <span className="text-xs text-muted-foreground">–</span>
-          <Input
-            type="number"
-            min={0}
-            inputMode="decimal"
-            placeholder={t("filterAmountMax")}
-            value={value.amountMax}
-            onChange={(e) => set({ amountMax: e.target.value })}
-            className="h-8"
-          />
-        </div>
-      </BarPopover>
+      <div className="flex items-center gap-1">
+        <Input
+          type="number"
+          min={0}
+          inputMode="decimal"
+          placeholder={t("filterAmountMin")}
+          aria-label={t("filterAmountMin")}
+          value={value.amountMin}
+          onChange={(e) => set({ amountMin: e.target.value })}
+          className="h-8 w-[5.5rem] text-xs"
+        />
+        <span className="text-xs text-muted-foreground">–</span>
+        <Input
+          type="number"
+          min={0}
+          inputMode="decimal"
+          placeholder={t("filterAmountMax")}
+          aria-label={t("filterAmountMax")}
+          value={value.amountMax}
+          onChange={(e) => set({ amountMax: e.target.value })}
+          className="h-8 w-[5.5rem] text-xs"
+        />
+      </div>
 
-      <BarPopover
-        icon={CalendarRange}
-        label={t("filterDatesLabel")}
-        displayValue={datesDisplay}
-        active={datesActive}
-      >
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="w-10 shrink-0">{t("filterDateFrom")}</span>
-          <Input
-            type="date"
-            value={value.dateFrom}
-            onFocus={prefillDates}
-            onChange={(e) => set({ dateFrom: e.target.value })}
-            className="h-8"
-          />
-        </label>
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="w-10 shrink-0">{t("filterDateTo")}</span>
-          <Input
-            type="date"
-            value={value.dateTo}
-            onFocus={prefillDates}
-            onChange={(e) => set({ dateTo: e.target.value })}
-            className="h-8"
-          />
-        </label>
-        <p className="text-[11px] text-muted-foreground">
-          {t("filterDatesHint")}
-        </p>
-      </BarPopover>
+      <div className="flex items-center gap-1">
+        <Input
+          type="date"
+          aria-label={t("filterDateFrom")}
+          value={value.dateFrom}
+          onFocus={prefillDates}
+          onChange={(e) => set({ dateFrom: e.target.value })}
+          className="h-8 w-[8.25rem] text-xs"
+        />
+        <span className="text-xs text-muted-foreground">–</span>
+        <Input
+          type="date"
+          aria-label={t("filterDateTo")}
+          value={value.dateTo}
+          onFocus={prefillDates}
+          onChange={(e) => set({ dateTo: e.target.value })}
+          className="h-8 w-[8.25rem] text-xs"
+        />
+      </div>
 
-      <BarPopover
-        icon={EyeOff}
-        label={t("filterNotCountedShort")}
-        displayValue={notCountedDisplay}
-        active={value.notCounted !== "hidden"}
+      <Select
+        value={value.notCounted}
+        onValueChange={(v) => {
+          if (v === "all" || v === "hidden" || v === "only") {
+            set({ notCounted: v });
+          }
+        }}
       >
-        <div className="flex items-center gap-1 rounded-full border border-border bg-muted/30 p-0.5">
-          {notCountedOptions.map((opt) => (
-            <button
-              key={opt.filterValue}
-              type="button"
-              onClick={() => set({ notCounted: opt.filterValue })}
-              className={cn(
-                "flex-1 rounded-full px-2 py-1 text-[11px] font-medium transition-colors",
-                value.notCounted === opt.filterValue
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          {t("filterNotCountedHint")}
-        </p>
-      </BarPopover>
+        <SelectTrigger
+          className="h-8 w-fit gap-1.5 text-xs"
+          aria-label={t("filterNotCountedLabel")}
+          title={t("filterNotCountedHint")}
+        >
+          <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="hidden">{t("filterNotCountedHidden")}</SelectItem>
+          <SelectItem value="all">{t("filterNotCountedAll")}</SelectItem>
+          <SelectItem value="only">{t("filterNotCountedOnly")}</SelectItem>
+        </SelectContent>
+      </Select>
 
       {anyActive && (
         <Button

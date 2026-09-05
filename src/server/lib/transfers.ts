@@ -52,15 +52,6 @@ export const PENDING_CARD_AGGREGATE_PATTERNS: readonly RegExp[] = [
   /חיוב\s*זמני\s*למפתח/i,
 ];
 
-// Keywords that attribute a bank charge line to a specific card company, for
-// lines that mention the company but not the card number (common on Hapoalim).
-const CARD_COMPANY_KEYWORDS: Readonly<Record<string, readonly RegExp[]>> = {
-  isracard: [/ישראכרט/i, /ישרא[\s־-]?כארד/i, /\bISRACARD\b/i],
-  cal: [/כ[\s.\-־]?א[\s.\-־]?ל/i, /\bCAL\b/i],
-  max: [/מקס/i, /\bMAX\b/i],
-  amex: [/אמריקן\s*אקספרס/i, /\bAMEX\b/i, /\bAMERICAN\s+EXPRESS\b/i],
-};
-
 export interface TrackedCards {
   /** account_number values seen on transactions from card providers */
   numbers: readonly string[];
@@ -96,10 +87,10 @@ function last4(value: string): string | null {
 /**
  * Classify a bank-side transaction line against the cards we actually track.
  *
- * Decision order: an explicit card-number match beats everything; a company
- * keyword match counts only if that company is a tracked provider; a card-ish
- * line that matches no tracked card must NOT be auto-excluded, because for an
- * untracked card the aggregate charge is the only record of that spending.
+ * Decision order: an explicit card-number match beats everything; a card-ish
+ * line that matches no tracked card, or names no card at all, must NOT be
+ * auto-excluded, because for an untracked card the aggregate charge is the
+ * only record of that spending.
  */
 export function classifyCardLine(
   description: string,
@@ -131,11 +122,12 @@ export function classifyCardLine(
   // failure mode is counting it as spending and flagging, never excluding.
   if (runs.length > 0) return "untracked-card";
 
-  for (const provider of tracked.providers) {
-    const keywords = CARD_COMPANY_KEYWORDS[provider];
-    if (keywords?.some((p) => p.test(normalized))) return "tracked-card";
-  }
-
+  // No card number at all. A company keyword alone cannot say WHICH card
+  // the charge belongs to: the same provider can bill both a tracked card
+  // (numbered lines) and an untracked one (generic lines). Per the safety
+  // rule above, an ambiguous aggregate counts as spending and gets
+  // flagged; the user can bulk-mark it as a transfer if it really is the
+  // tracked card's bill, and that override sticks.
   return "untracked-card";
 }
 

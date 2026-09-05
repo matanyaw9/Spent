@@ -63,9 +63,13 @@ describe("classifyCardLine", () => {
     expect(classifyCardLine("ישראכרט 5555", cards)).toBe("untracked-card");
   });
 
-  it("matches a numberless line by company keyword for tracked providers", () => {
+  it("treats numberless company lines as untracked: the card is ambiguous", () => {
+    // A keyword names the company, not the card. The same provider can
+    // bill a tracked card (numbered lines) and an untracked one (generic
+    // lines), so an ambiguous aggregate must count as spending, flagged,
+    // rather than silently vanish as a transfer.
     const cards: TrackedCards = { numbers: ["1234"], providers: ["isracard"] };
-    expect(classifyCardLine("ישראכרט", cards)).toBe("tracked-card");
+    expect(classifyCardLine("ישראכרט", cards)).toBe("untracked-card");
     expect(classifyCardLine("מקס איט פיננסים", cards)).toBe("untracked-card");
   });
 

@@ -97,6 +97,22 @@ function CardRow({
   const t = useTranslations("settings.cards");
   const info = BANK_PROVIDERS.find((b) => b.id === card.provider);
   const [nickname, setNickname] = useState(card.nickname ?? "");
+  const [billingDay, setBillingDay] = useState(
+    card.billingDay != null ? String(card.billingDay) : ""
+  );
+
+  const commitBillingDay = () => {
+    const trimmed = billingDay.trim();
+    const parsed = Number(trimmed);
+    const next =
+      trimmed && Number.isInteger(parsed) && parsed >= 1 && parsed <= 31
+        ? parsed
+        : null;
+    if (next !== (card.billingDay ?? null)) {
+      onSave({ billingDay: next });
+    }
+    setBillingDay(next != null ? String(next) : "");
+  };
 
   const commitNickname = () => {
     const trimmed = nickname.trim();
@@ -159,28 +175,24 @@ function CardRow({
           </SelectContent>
         </Select>
         {card.cardType === "credit" && (
-          <Select
-            value={card.billingDay != null ? String(card.billingDay) : NONE}
-            onValueChange={(v) => {
-              if (!v) return;
-              onSave({ billingDay: v === NONE ? null : Number(v) });
-            }}
-          >
-            <SelectTrigger
-              className="h-8 w-36 text-sm"
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {t("billingDay")}
+            <Input
+              type="number"
+              min={1}
+              max={31}
+              inputMode="numeric"
+              value={billingDay}
+              onChange={(e) => setBillingDay(e.target.value)}
+              onBlur={commitBillingDay}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+              placeholder="10"
+              className="h-8 w-16 text-sm"
               aria-label={t("billingDay")}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="max-h-64">
-              <SelectItem value={NONE}>{t("billingDayUnset")}</SelectItem>
-              {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
-                <SelectItem key={day} value={String(day)}>
-                  {t("billingDayOption", { day })}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            />
+          </label>
         )}
       </div>
     </li>

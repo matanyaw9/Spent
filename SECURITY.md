@@ -34,13 +34,17 @@ The right defense for both is **full-disk encryption on your laptop**
 ## Network surface
 
 The dev server binds to `127.0.0.1` only. It is not reachable from your
-local network or the internet. The library only contacts:
+local network or the internet. The app only contacts:
 
-- Your bank's domains (e.g., `digital.isracard.co.il`) — via Puppeteer
-- `api.anthropic.com` — only if Claude is your AI provider
-- `localhost:11434` — only if Ollama is your AI provider
-- `www.google.com` — favicon API for bank logos (only the domain
-  name leaves your machine, no credentials)
+- Your bank's domains (e.g., `digital.isracard.co.il`): via Puppeteer
+- `api.anthropic.com`: only if Claude is your AI provider
+- `localhost:11434`: only if Ollama is your AI provider
+
+Bank logos are bundled in `public/banks/` and fonts are self-hosted via
+`next/font`, so the browser never talks to Google or any other third
+party. The Content-Security-Policy in `next.config.ts` enforces this:
+`connect-src` is same-origin only. Next.js build telemetry is disabled
+in `next.config.ts` for everyone who clones the repo.
 
 Run with `mitmproxy` or Charles to verify this yourself.
 

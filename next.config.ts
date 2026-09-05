@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 
+// Spent never phones home. Next.js build/dev telemetry is opt-out, so opt
+// out here for everyone who clones the repo (not just this machine).
+process.env.NEXT_TELEMETRY_DISABLED ||= "1";
+
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const SECURITY_HEADERS = [
@@ -15,19 +19,22 @@ const SECURITY_HEADERS = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), payment=()",
   },
-  // CSP for a local-only app: only same-origin scripts/styles + Google
-  // fonts + bank favicons (s2/favicons redirects to *.gstatic.com). Inline
-  // styles allowed for shadcn/Tailwind.
+  // CSP for a local-only app: everything is same-origin. Fonts are
+  // self-hosted via next/font and bank logos ship in public/banks, so the
+  // browser is only ever allowed to talk to the app itself. AI calls
+  // (Anthropic API, local Ollama) happen server-side, never from the page.
+  // Inline styles allowed for shadcn/Tailwind.
   // 'unsafe-inline' on scripts is necessary because Next dev injects them.
   {
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' data: https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https://www.google.com https://*.gstatic.com",
-      "connect-src 'self' https://api.anthropic.com http://localhost:11434 ws://127.0.0.1:* ws://localhost:*",
+      "style-src 'self' 'unsafe-inline'",
+      "font-src 'self' data:",
+      "img-src 'self' data: blob:",
+      // ws: is for Next dev-mode HMR only.
+      "connect-src 'self' ws://127.0.0.1:* ws://localhost:*",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { AlertTriangle, Trash2 } from "lucide-react";
+import { AlertTriangle, Palette, Trash2 } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -37,8 +37,11 @@ import {
   setCategoryParent,
   updateBudget,
   updateCategoryBudgetMode,
+  updateCategoryColor,
   updateCategoryDescription,
 } from "@/lib/api";
+import { CATEGORY_COLOR_PALETTE } from "@/lib/category-palette";
+import { cn } from "@/lib/utils";
 import type { Category, CategoryWithData } from "@/lib/types";
 
 const NONE_VALUE = "__none__";
@@ -154,6 +157,8 @@ function Body({
           category={category}
           eligibleParents={eligibleParents}
         />
+
+        <ColorSection category={category} />
 
         <DescriptionSection category={category} />
 
@@ -475,6 +480,66 @@ function GroupSection({
         </Select>
         <p className="text-[11px] text-muted-foreground">
           Use a parent group to roll spending up. Most users keep the defaults.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function ColorSection({ category }: { category: Category }) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (color: string) => updateCategoryColor(category.id, color),
+    onSuccess: () => {
+      // No toast: the swatch ring and every badge recolor immediately.
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Couldn't update the color");
+    },
+  });
+
+  return (
+    <section>
+      <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        Color
+      </div>
+      <div className="mt-3 rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {CATEGORY_COLOR_PALETTE.map((color) => (
+            <button
+              key={color}
+              type="button"
+              disabled={mutation.isPending}
+              onClick={() => mutation.mutate(color)}
+              aria-label={`Use ${color}`}
+              className={cn(
+                "h-7 w-7 rounded-full border transition-transform hover:scale-110",
+                category.color.toLowerCase() === color.toLowerCase()
+                  ? "border-foreground ring-2 ring-foreground/30"
+                  : "border-border"
+              )}
+              style={{ backgroundColor: color }}
+            />
+          ))}
+          <label
+            title="Custom color"
+            className="relative flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <Palette className="h-3.5 w-3.5" />
+            <input
+              type="color"
+              value={category.color}
+              onChange={(e) => mutation.mutate(e.target.value)}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            />
+          </label>
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Used for this category&apos;s badge, charts, and budget cards.
         </p>
       </div>
     </section>

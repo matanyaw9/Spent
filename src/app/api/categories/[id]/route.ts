@@ -3,6 +3,7 @@ import {
   deleteCategory,
   setCategoryParent,
   updateCategoryBudgetMode,
+  updateCategoryColor,
   updateCategoryDescription,
 } from "@/server/db/queries/categories";
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
@@ -31,9 +32,27 @@ export async function PATCH(
     budgetMode?: unknown;
     description?: unknown;
     parentId?: unknown;
+    color?: unknown;
   };
 
   let applied = false;
+
+  if (typed.color !== undefined) {
+    if (
+      typeof typed.color !== "string" ||
+      !/^#[0-9a-fA-F]{6}$/.test(typed.color)
+    ) {
+      return NextResponse.json(
+        { error: "color must be a #rrggbb hex string" },
+        { status: 400 }
+      );
+    }
+    const ok = updateCategoryColor(workspaceId, categoryId, typed.color);
+    if (!ok) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    applied = true;
+  }
 
   if (typed.budgetMode !== undefined) {
     if (typed.budgetMode !== "budgeted" && typed.budgetMode !== "tracking") {

@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDb } from "../index";
 import type { Category, CategoryKind } from "@/lib/types";
+import { CATEGORY_COLOR_PALETTE } from "@/lib/category-palette";
 
 const CATEGORY_COLUMNS =
   "id, parent_id as parentId, name, color, icon, kind, budget_mode as budgetMode, description";
@@ -117,6 +118,19 @@ export function updateCategoryDescription(
       "UPDATE categories SET description = ? WHERE workspace_id = ? AND id = ?"
     )
     .run(value, workspaceId, id);
+  return result.changes > 0;
+}
+
+export function updateCategoryColor(
+  workspaceId: number,
+  id: number,
+  color: string
+): boolean {
+  const result = getDb()
+    .prepare(
+      "UPDATE categories SET color = ? WHERE workspace_id = ? AND id = ?"
+    )
+    .run(color, workspaceId, id);
   return result.changes > 0;
 }
 
@@ -278,32 +292,16 @@ export const SEEDED_CATEGORY_PARENTS: Record<string, string> = {
   "Fees & Taxes": "Money Movement",
 };
 
-// Palette for AI-proposed new categories. Distinct hues, none colliding
-// with the 16 seeded category colors. Picked deterministically via a hash
-// of the category name so the same proposal always gets the same color.
-// Chroma matched to the L2 buttercream lift.
-const NEW_CATEGORY_PALETTE = [
-  "#A4C386", // light olive
-  "#E7A875", // sandy orange
-  "#65C1D1", // light cyan-blue
-  "#D692BF", // bright pink
-  "#9186D1", // medium violet
-  "#73C4A8", // jade
-  "#7D90CA", // dusty indigo
-  "#A2ABBB", // medium slate
-  "#BF9ED9", // mauve
-  "#92D5B7", // mint
-  "#D6C480", // sand gold
-  "#BFB89B", // sage tan
-] as const;
-
+// New categories get a deterministic color via a hash of the name so the
+// same proposal always gets the same color. Palette lives in
+// src/lib/category-palette.ts, shared with the color picker UI.
 function pickColor(seed: string): string {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
     hash = (hash * 31 + seed.charCodeAt(i)) | 0;
   }
-  const idx = Math.abs(hash) % NEW_CATEGORY_PALETTE.length;
-  return NEW_CATEGORY_PALETTE[idx];
+  const idx = Math.abs(hash) % CATEGORY_COLOR_PALETTE.length;
+  return CATEGORY_COLOR_PALETTE[idx];
 }
 
 /**

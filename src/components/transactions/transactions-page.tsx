@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   keepPreviousData,
   useQuery,
@@ -54,7 +54,6 @@ export function TransactionsPage() {
   const [kind, setKind] = useState<TransactionKindFilter>("all");
   const [sortField, setSortField] = useState<TransactionSortField>("date");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
-  const [notCountedOnly, setNotCountedOnly] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(
     EMPTY_ADVANCED_FILTERS
   );
@@ -81,7 +80,10 @@ export function TransactionsPage() {
   };
   const amountMin = parseAmount(advancedFilters.amountMin);
   const amountMax = parseAmount(advancedFilters.amountMax);
-  const excludedFilter = advancedFilters.excluded ?? undefined;
+  const notCountedParam =
+    advancedFilters.notCounted === "all"
+      ? undefined
+      : advancedFilters.notCounted;
   const accountNumbersFilter =
     advancedFilters.accountNumbers.length > 0
       ? advancedFilters.accountNumbers
@@ -95,7 +97,6 @@ export function TransactionsPage() {
     search,
     categoryFilter,
     kind,
-    notCountedOnly,
     advancedFilters,
   ]);
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
@@ -113,6 +114,13 @@ export function TransactionsPage() {
     queryKey: ["transaction-accounts"],
     queryFn: () => listTransactionAccounts(),
   });
+  const cardNicknames = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const account of accountsQuery.data ?? []) {
+      if (account.nickname) map.set(account.accountNumber, account.nickname);
+    }
+    return map;
+  }, [accountsQuery.data]);
 
   const expandedCategoryIds = expandCategoryFilterIds(
     categoryFilter,
@@ -130,7 +138,6 @@ export function TransactionsPage() {
       kind,
       sortField,
       sortOrder,
-      notCountedOnly,
       advancedFilters,
     ],
     queryFn: () =>
@@ -144,8 +151,7 @@ export function TransactionsPage() {
         kind,
         sort: sortField,
         order: sortOrder,
-        notCounted: notCountedOnly || undefined,
-        excluded: excludedFilter,
+        notCounted: notCountedParam,
         amountMin,
         amountMax,
         accountNumbers: accountNumbersFilter,
@@ -174,12 +180,22 @@ export function TransactionsPage() {
       }
     };
     // Clicking outside the table (and outside any portaled popup or the
-    // bulk bar) drops the selection, like a mail client. Portaled content
-    // and app controls carry data-slot; the table and bar opt in via
-    // data-keep-selection.
+    // bulk bar) drops the selection, like a mail client. Only the table
+    // wrapper, the bulk bar (data-keep-selection), and floating overlays
+    // count as inside; everything else on the page clears.
+    const KEEP_SELECTOR = [
+      "[data-keep-selection]",
+      '[data-slot="popover-content"]',
+      '[data-slot="dropdown-menu-content"]',
+      '[data-slot="dialog-content"]',
+      '[data-slot="select-content"]',
+      "[role='dialog']",
+      "[role='menu']",
+      "[role='listbox']",
+    ].join(", ");
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-keep-selection], [data-slot]")) return;
+      if (target?.closest(KEEP_SELECTOR)) return;
       setSelectedIds(new Set());
       setAllMatching(false);
     };
@@ -225,8 +241,7 @@ export function TransactionsPage() {
                 ? expandedCategoryIds
                 : undefined,
               kind,
-              notCounted: notCountedOnly || undefined,
-              excluded: excludedFilter,
+              notCounted: notCountedParam,
               amountMin,
               amountMax,
               accountNumbers: accountNumbersFilter,
@@ -377,11 +392,15 @@ export function TransactionsPage() {
           onSelectAllMatching={() => setAllMatching(true)}
           onClearSelection={clearSelection}
           notCounted={summaryQuery.data?.notCounted}
-          notCountedOnly={notCountedOnly}
+          notCountedOnly={advancedFilters.notCounted === "only"}
           onNotCountedOnlyChange={(value) => {
-            setNotCountedOnly(value);
+            setAdvancedFilters((prev) => ({
+              ...prev,
+              notCounted: value ? "only" : "hidden",
+            }));
             setPage(0);
           }}
+          cardNicknames={cardNicknames}
         />
         </div>
       </div>

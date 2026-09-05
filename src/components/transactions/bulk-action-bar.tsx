@@ -55,11 +55,12 @@ export function BulkActionBar({
 
         <CategoryPicker
           kinds={["expense", "income"]}
+          allowUncategorized
           disabled={pending}
           align="center"
           side="top"
           onSelect={(cat) =>
-            onAction({ type: "category", categoryId: cat.id })
+            onAction({ type: "category", categoryId: cat?.id ?? null })
           }
           triggerClassName="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
         >

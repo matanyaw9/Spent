@@ -227,18 +227,26 @@ describe("resolveFilteredTransactionIds", () => {
 
     const ids = queries.resolveFilteredTransactionIds(WS, {
       ...range,
-      notCounted: true,
+      notCounted: "only",
     });
     expect(ids).toContain(excluded);
     expect(ids).toContain(transfer);
     expect(ids).not.toContain(counted);
+
+    const hidden = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      notCounted: "hidden",
+    });
+    expect(hidden).toContain(counted);
+    expect(hidden).not.toContain(excluded);
+    expect(hidden).not.toContain(transfer);
   });
 });
 
 describe("advanced list filters", () => {
   const range = { from: "2031-03-01", to: "2031-03-31" };
 
-  it("excluded tri-state hides or isolates excluded rows", () => {
+  it("not-counted visibility hides or isolates excluded and transfer rows", () => {
     const kept = insertTxn({ amount: -10, kind: "expense", date: "2031-03-05" });
     const excluded = insertTxn({
       amount: -20,
@@ -246,19 +254,25 @@ describe("advanced list filters", () => {
       excluded: true,
       date: "2031-03-06",
     });
+    const transfer = insertTxn({
+      amount: -500,
+      kind: "transfer",
+      date: "2031-03-07",
+    });
 
     const hidden = queries.resolveFilteredTransactionIds(WS, {
       ...range,
-      excluded: "hide",
+      notCounted: "hidden",
     });
     expect(hidden).toContain(kept);
     expect(hidden).not.toContain(excluded);
+    expect(hidden).not.toContain(transfer);
 
     const only = queries.resolveFilteredTransactionIds(WS, {
       ...range,
-      excluded: "only",
+      notCounted: "only",
     });
-    expect(only).toEqual([excluded]);
+    expect(only).toEqual([excluded, transfer]);
   });
 
   it("amount bounds apply to the magnitude, not the sign", () => {
@@ -508,6 +522,82 @@ describe("date normalization", () => {
           .get() as { count: number }
       ).count
     ).toBe(1);
+  });
+});
+
+describe("clearing categories", () => {
+  it("single and bulk clear reset category, source, and review flag", () => {
+    const a = insertTxn({ amount: -10, kind: "expense" });
+    const b = insertTxn({ amount: -20, kind: "expense" });
+    queries.bulkAssignCategory(WS, [a, b], expenseCategoryId, "expense");
+
+    queries.clearTransactionCategory(WS, a);
+    expect(getRow(a)).toMatchObject({
+      category_id: null,
+      category_source: null,
+    });
+
+    const cleared = queries.bulkClearCategory(WS, [b]);
+    expect(cleared).toBe(1);
+    expect(getRow(b).category_id).toBeNull();
+  });
+});
+
+describe("notes and nicknames", () => {
+  it("stores and clears a user note", () => {
+    const id = insertTxn({ amount: -10, kind: "expense" });
+    expect(queries.setTransactionNote(WS, id, "split with roommate")).toBe(
+      true
+    );
+    const note = () =>
+      (db.prepare(`SELECT note FROM transactions WHERE id = ?`).get(id) as {
+        note: string | null;
+      }).note;
+    expect(note()).toBe("split with roommate");
+    queries.setTransactionNote(WS, id, null);
+    expect(note()).toBeNull();
+  });
+
+  it("upserts card nicknames and joins them into the accounts list", async () => {
+    const nicknames = await import("./card-nicknames");
+    insertTxn({ amount: -10, kind: "expense", accountNumber: "5555" });
+    nicknames.setCardNickname(WS, "5555", "My gold card");
+    nicknames.setCardNickname(WS, "5555", "Gold card");
+
+    const accounts = queries.listTransactionAccounts(WS);
+    const row = accounts.find((a) => a.accountNumber === "5555");
+    expect(row?.nickname).toBe("Gold card");
+
+    nicknames.setCardNickname(WS, "5555", null);
+    expect(
+      queries
+        .listTransactionAccounts(WS)
+        .find((a) => a.accountNumber === "5555")?.nickname
+    ).toBeNull();
+  });
+});
+
+describe("category hierarchy", () => {
+  it("allows deep parents but rejects cycles", async () => {
+    const cats = await import("./categories");
+    const a = cats.ensureCategory(WS, "Deep A", "circle-dot", "expense");
+    const b = cats.ensureCategory(WS, "Deep B", "circle-dot", "expense", {
+      parentId: a.id,
+    });
+    const c = cats.ensureCategory(WS, "Deep C", "circle-dot", "expense", {
+      parentId: b.id,
+    });
+    expect(c.parentId).toBe(b.id);
+
+    // Grandchild's default color shares the parent's hue family, not the
+    // generic palette pick.
+    expect(c.color).toMatch(/^#[0-9a-f]{6}$/i);
+
+    const cycle = cats.setCategoryParent(WS, a.id, c.id);
+    expect(cycle).toMatchObject({ ok: false, reason: "cycle" });
+
+    const reparent = cats.setCategoryParent(WS, c.id, a.id);
+    expect(reparent.ok).toBe(true);
   });
 });
 

@@ -36,6 +36,7 @@ import {
   ArrowLeftRight,
   EyeOff,
   Eye,
+  StickyNote,
   Trash2,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,11 +44,19 @@ import { formatCurrency, formatDate } from "@/lib/formatters";
 import {
   updateTransactionCategory,
   setTransactionKind,
+  setTransactionNote,
   approveTransactionCategory,
   deleteTransaction,
   setTransactionExcluded,
   type TransactionsSummary,
 } from "@/lib/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { CategoryPicker } from "@/components/transactions/category-picker";
 import { toast } from "sonner";
 import { translateCategoryName } from "@/lib/i18n-data";
@@ -88,6 +97,8 @@ interface TransactionsTableProps {
   notCounted?: TransactionsSummary["notCounted"];
   notCountedOnly: boolean;
   onNotCountedOnlyChange: (value: boolean) => void;
+  /** account_number to user nickname, for the source column. */
+  cardNicknames: ReadonlyMap<string, string>;
 }
 
 const PAGE_SIZE = 50;
@@ -115,6 +126,7 @@ export function TransactionsTable({
   notCounted,
   notCountedOnly,
   onNotCountedOnlyChange,
+  cardNicknames,
 }: TransactionsTableProps) {
   const t = useTranslations("transactions");
   const tCat = useTranslations("categoriesSeeded");
@@ -168,23 +180,15 @@ export function TransactionsTable({
 
   const hasSelectionActive = allMatching || selectedIds.size > 0;
 
-  // Outlook-style: once a selection exists (or with Ctrl/Shift held), a
-  // click anywhere on the row toggles it; clicks on the row's own controls
-  // keep their meaning.
+  // A click anywhere on the row body toggles its selection (Shift extends
+  // the range); clicks on the row's own controls keep their meaning.
   const handleRowBackgroundClick = (
     index: number,
     event: React.MouseEvent<HTMLTableRowElement>
   ) => {
     const target = event.target as HTMLElement;
-    if (target.closest("button, a, input, [role='menu']")) return;
-    if (
-      event.shiftKey ||
-      event.ctrlKey ||
-      event.metaKey ||
-      hasSelectionActive
-    ) {
-      applySelectionClick(index, event.shiftKey);
-    }
+    if (target.closest("button, a, input, label, [role='menu']")) return;
+    applySelectionClick(index, event.shiftKey);
   };
 
   const otherKinds: Record<Kind, Array<{ value: Kind; label: string }>> = {
@@ -202,7 +206,10 @@ export function TransactionsTable({
     ],
   };
 
-  const handleCategoryChange = async (txnId: number, categoryId: number) => {
+  const handleCategoryChange = async (
+    txnId: number,
+    categoryId: number | null
+  ) => {
     setUpdatingId(txnId);
     try {
       await updateTransactionCategory(txnId, categoryId);
@@ -246,6 +253,31 @@ export function TransactionsTable({
     queryClient.invalidateQueries({ queryKey: ["home"] });
     queryClient.invalidateQueries({ queryKey: ["categories"] });
     queryClient.invalidateQueries({ queryKey: ["excluded-merchants"] });
+  };
+
+  const [noteTarget, setNoteTarget] = useState<TransactionWithCategory | null>(
+    null
+  );
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+
+  const openNoteDialog = (txn: TransactionWithCategory) => {
+    setNoteDraft(txn.note ?? "");
+    setNoteTarget(txn);
+  };
+
+  const saveNote = async (value: string) => {
+    if (!noteTarget) return;
+    setNoteSaving(true);
+    try {
+      await setTransactionNote(noteTarget.id, value.trim() || null);
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      setNoteTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setNoteSaving(false);
+    }
   };
 
   const handleDelete = async (txn: TransactionWithCategory) => {
@@ -534,6 +566,17 @@ export function TransactionsTable({
                             {txn.memo}
                           </div>
                         )}
+                        {txn.note && (
+                          <button
+                            type="button"
+                            onClick={() => openNoteDialog(txn)}
+                            title={t("noteEdit")}
+                            className="mt-0.5 inline-flex items-center gap-1 text-start text-xs italic text-muted-foreground hover:text-foreground"
+                          >
+                            <StickyNote className="h-3 w-3 shrink-0" />
+                            <span className="line-clamp-2">{txn.note}</span>
+                          </button>
+                        )}
                         {txn.type === "installments" &&
                           txn.installmentNumber &&
                           txn.installmentTotal && (
@@ -549,9 +592,10 @@ export function TransactionsTable({
                         <div className="flex items-center gap-1.5">
                           <CategoryPicker
                             kinds={[categoryKind]}
+                            allowUncategorized
                             disabled={updatingId === txn.id}
                             onSelect={(cat) =>
-                              handleCategoryChange(txn.id, cat.id)
+                              handleCategoryChange(txn.id, cat?.id ?? null)
                             }
                             triggerClassName="inline-flex"
                           >
@@ -601,6 +645,7 @@ export function TransactionsTable({
                           provider={txn.provider}
                           accountLabel={txn.accountLabel}
                           accountNumber={txn.accountNumber}
+                          nickname={cardNicknames.get(txn.accountNumber)}
                         />
                       </TableCell>
                       <TableCell
@@ -634,6 +679,12 @@ export function TransactionsTable({
                                 {opt.label}
                               </DropdownMenuItem>
                             ))}
+                            <DropdownMenuItem
+                              onClick={() => openNoteDialog(txn)}
+                            >
+                              <StickyNote className="me-2 h-3.5 w-3.5" />
+                              {txn.note ? t("noteEdit") : t("noteAdd")}
+                            </DropdownMenuItem>
                             {txn.provider === "manual" && (
                               <DropdownMenuItem
                                 onClick={() => handleDelete(txn)}
@@ -731,6 +782,55 @@ export function TransactionsTable({
           </div>
         )}
       </CardContent>
+      <Dialog
+        open={noteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setNoteTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {noteTarget?.note ? t("noteEdit") : t("noteAdd")}
+            </DialogTitle>
+          </DialogHeader>
+          {noteTarget && (
+            <p className="truncate text-xs text-muted-foreground">
+              {noteTarget.description} ·{" "}
+              {formatCurrency(noteTarget.chargedAmount, "ILS", locale)}
+            </p>
+          )}
+          <textarea
+            autoFocus
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            maxLength={500}
+            rows={3}
+            placeholder={t("notePlaceholder")}
+            className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <DialogFooter>
+            {noteTarget?.note && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={noteSaving}
+                onClick={() => saveNote("")}
+                className="me-auto text-muted-foreground"
+              >
+                {t("noteRemove")}
+              </Button>
+            )}
+            <Button
+              type="button"
+              disabled={noteSaving}
+              onClick={() => saveNote(noteDraft)}
+            >
+              {t("noteSave")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

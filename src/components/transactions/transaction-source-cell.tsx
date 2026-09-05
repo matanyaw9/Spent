@@ -10,6 +10,8 @@ interface TransactionSourceCellProps {
   accountLabel: string | null;
   /** transactions.account_number: the card or bank account the row hit. */
   accountNumber?: string | null;
+  /** Per-card nickname; when set it becomes the primary line. */
+  nickname?: string | null;
 }
 
 export function getAccountDisplayLabel(
@@ -30,6 +32,7 @@ export function TransactionSourceCell({
   provider,
   accountLabel,
   accountNumber,
+  nickname,
 }: TransactionSourceCellProps) {
   const tBanks = useTranslations("banks");
   const info = BANK_PROVIDERS.find((b) => b.id === provider);
@@ -39,8 +42,19 @@ export function TransactionSourceCell({
     tBanks
   );
 
-  const { primary, secondary } = getAccountDisplayLabel(providerName, accountLabel);
-  const detail = [secondary, accountNumber?.trim() || null]
+  const base = getAccountDisplayLabel(providerName, accountLabel);
+  // A card nickname wins the primary line; the provider moves underneath.
+  // Account numbers only mean something for cards (last 4 digits); a bank
+  // account number is noise.
+  const primary = nickname?.trim() || base.primary;
+  const providerLine = nickname?.trim()
+    ? providerName
+    : base.secondary;
+  const last4 =
+    info?.kind === "card" && accountNumber?.trim()
+      ? accountNumber.trim().slice(-4)
+      : null;
+  const detail = [providerLine, last4]
     .filter((part): part is string => part != null)
     .join(" · ");
   const tooltip = detail ? `${primary} · ${detail}` : primary;

@@ -308,10 +308,13 @@ export interface TransactionListFilter {
   /** @deprecated Use credentialIds */
   credentialId?: number;
   credentialIds?: number[];
-  /** Only rows that don't count toward totals: excluded or transfers. */
-  notCounted?: boolean;
-  /** Excluded visibility: hide them, show only them, or (unset) both. */
-  excluded?: "hide" | "only";
+  /**
+   * Visibility of rows that don't count toward totals (excluded rows and
+   * transfers, which are mostly card-billing duplicates of itemized card
+   * spending): "hidden" drops them, "only" isolates them for review, and
+   * "all"/unset shows everything.
+   */
+  notCounted?: "all" | "hidden" | "only";
   /** Magnitude bounds, applied to ABS(charged_amount). */
   amountMin?: number;
   amountMax?: number;
@@ -391,13 +394,10 @@ function buildListConditions(
     conditions.push("t.kind = ?");
     values.push(kind);
   }
-  if (params.notCounted) {
+  if (params.notCounted === "only") {
     conditions.push("(t.is_excluded = 1 OR t.kind = 'transfer')");
-  }
-  if (params.excluded === "hide") {
-    conditions.push("t.is_excluded = 0");
-  } else if (params.excluded === "only") {
-    conditions.push("t.is_excluded = 1");
+  } else if (params.notCounted === "hidden") {
+    conditions.push("t.is_excluded = 0 AND t.kind != 'transfer'");
   }
   if (params.amountMin != null) {
     conditions.push("ABS(t.charged_amount) >= ?");
@@ -785,6 +785,7 @@ interface TransactionRow {
   is_excluded: number;
   created_at: string;
   updated_at: string;
+  note: string | null;
   category_name?: string | null;
   category_color?: string | null;
   category_icon?: string | null;
@@ -804,6 +805,7 @@ function mapTransactionRow(row: unknown): TransactionWithCategory {
     chargedCurrency: r.charged_currency,
     description: r.description,
     memo: r.memo,
+    note: r.note ?? null,
     type: r.type as "normal" | "installments",
     status: r.status as "completed" | "pending",
     identifier: r.identifier,
@@ -929,6 +931,7 @@ export interface TransactionAccount {
   provider: string;
   accountNumber: string;
   count: number;
+  nickname: string | null;
 }
 
 /** Distinct cards/accounts that appear on this workspace's transactions. */
@@ -937,11 +940,15 @@ export function listTransactionAccounts(
 ): TransactionAccount[] {
   return getDb()
     .prepare(
-      `SELECT provider, account_number as accountNumber, COUNT(*) as count
-       FROM transactions
-       WHERE workspace_id = ?
-       GROUP BY provider, account_number
-       ORDER BY provider, account_number`
+      `SELECT t.provider, t.account_number as accountNumber, COUNT(*) as count,
+              cn.nickname as nickname
+       FROM transactions t
+       LEFT JOIN card_nicknames cn
+         ON cn.workspace_id = t.workspace_id
+        AND cn.account_number = t.account_number
+       WHERE t.workspace_id = ?
+       GROUP BY t.provider, t.account_number
+       ORDER BY t.provider, t.account_number`
     )
     .all(workspaceId) as TransactionAccount[];
 }
@@ -1138,6 +1145,56 @@ export function bulkAssignCategory(
     skipped: ids.length - updated,
     merchants: [...merchants],
   };
+}
+
+export function setTransactionNote(
+  workspaceId: number,
+  id: number,
+  note: string | null
+): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE transactions
+       SET note = ?, updated_at = datetime('now')
+       WHERE workspace_id = ? AND id = ?`
+    )
+    .run(note, workspaceId, id);
+  return result.changes > 0;
+}
+
+export function clearTransactionCategory(
+  workspaceId: number,
+  id: number
+): void {
+  getDb()
+    .prepare(
+      `UPDATE transactions
+       SET category_id = NULL, category_source = NULL, needs_review = 0,
+           updated_at = datetime('now')
+       WHERE workspace_id = ? AND id = ?`
+    )
+    .run(workspaceId, id);
+}
+
+export function bulkClearCategory(workspaceId: number, ids: number[]): number {
+  if (ids.length === 0) return 0;
+  const db = getDb();
+  let updated = 0;
+  db.transaction(() => {
+    for (const chunk of chunkIds(ids)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = db
+        .prepare(
+          `UPDATE transactions
+           SET category_id = NULL, category_source = NULL, needs_review = 0,
+               updated_at = datetime('now')
+           WHERE workspace_id = ? AND id IN (${placeholders})`
+        )
+        .run(workspaceId, ...chunk);
+      updated += result.changes;
+    }
+  })();
+  return updated;
 }
 
 export function setTransactionNeedsReview(

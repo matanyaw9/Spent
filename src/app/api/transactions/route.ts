@@ -47,13 +47,12 @@ export async function GET(request: Request) {
       ? Number(searchParams.get("offset"))
       : undefined,
     kind: parseKind(searchParams.get("kind")),
-    notCounted: searchParams.get("notCounted") === "true" ? true : undefined,
-    excluded:
-      searchParams.get("excluded") === "hide"
-        ? "hide"
-        : searchParams.get("excluded") === "only"
-          ? "only"
-          : undefined,
+    notCounted: ((): "hidden" | "only" | undefined => {
+      const raw = searchParams.get("notCounted");
+      if (raw === "hidden") return "hidden";
+      if (raw === "only" || raw === "true") return "only";
+      return undefined;
+    })(),
     amountMin: searchParams.has("amountMin")
       ? Number(searchParams.get("amountMin"))
       : undefined,

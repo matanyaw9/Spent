@@ -19,7 +19,9 @@ import type { Category, CategoryKind } from "@/lib/types";
 interface CategoryPickerProps {
   /** Which category kinds to offer. One kind for a row, both for bulk. */
   kinds: CategoryKind[];
-  onSelect: (category: Category) => void;
+  /** Offer an "Uncategorized" row that selects null (clears the category). */
+  allowUncategorized?: boolean;
+  onSelect: (category: Category | null) => void;
   disabled?: boolean;
   triggerClassName?: string;
   align?: "start" | "center" | "end";
@@ -33,6 +35,7 @@ interface CategoryPickerProps {
  */
 export function CategoryPicker({
   kinds,
+  allowUncategorized = false,
   onSelect,
   disabled,
   triggerClassName,
@@ -100,7 +103,7 @@ export function CategoryPicker({
   const showCreate = trimmed.length > 0 && allLoaded && !exactExists;
   const visibleMatches = groups.flatMap((g) => g.categories);
 
-  const finish = (category: Category) => {
+  const finish = (category: Category | null) => {
     setOpen(false);
     setQuery("");
     onSelect(category);
@@ -157,6 +160,16 @@ export function CategoryPicker({
           />
         </div>
         <div className="max-h-64 overflow-y-auto p-1">
+          {allowUncategorized && !trimmed && (
+            <button
+              type="button"
+              onClick={() => finish(null)}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm text-muted-foreground transition-colors hover:bg-accent"
+            >
+              <div className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40" />
+              <span className="truncate">{t("rowUncategorized")}</span>
+            </button>
+          )}
           {groups.map((group) => (
             <div key={group.kind}>
               {kinds.length > 1 && group.categories.length > 0 && (

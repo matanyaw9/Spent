@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   bulkAssignCategory,
+  bulkClearCategory,
   bulkSetTransactionExcluded,
   bulkSetTransactionKind,
   resolveFilteredTransactionIds,
@@ -59,9 +60,12 @@ function parseFilter(raw: unknown): TransactionListFilter | null {
       kind === "expense" || kind === "income" || kind === "transfer" || kind === "all"
         ? (kind as TransactionKindFilter)
         : undefined,
-    notCounted: f.notCounted === true ? true : undefined,
-    excluded:
-      f.excluded === "hide" || f.excluded === "only" ? f.excluded : undefined,
+    notCounted:
+      f.notCounted === "hidden" || f.notCounted === "only"
+        ? f.notCounted
+        : f.notCounted === true
+          ? "only"
+          : undefined,
     amountMin:
       typeof f.amountMin === "number" && Number.isFinite(f.amountMin)
         ? f.amountMin
@@ -142,6 +146,11 @@ export async function POST(request: Request) {
   }
 
   if (action.type === "category") {
+    // null means "uncategorized": clear the category on every target row.
+    if (action.categoryId === null) {
+      const updated = bulkClearCategory(workspaceId, ids);
+      return NextResponse.json({ updated, skipped: ids.length - updated });
+    }
     const categoryId = Number(action.categoryId);
     if (!Number.isInteger(categoryId) || categoryId <= 0) {
       return NextResponse.json(

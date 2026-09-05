@@ -17,6 +17,8 @@ export interface Transaction {
   chargedCurrency: string | null;
   description: string;
   memo: string | null;
+  /** Free-text note the user attached; never touched by sync. */
+  note: string | null;
   type: "normal" | "installments";
   status: "completed" | "pending";
   identifier: string | null;
@@ -290,8 +292,8 @@ export interface AppSettings {
   autoSyncEnabled: boolean;
   autoSyncTime: string;
   language: "en" | "he";
-  /** User-saved swatches shown alongside the built-in category palette. */
-  customCategoryColors: string[];
+  /** The workspace's editable swatch palette for category colors. */
+  categoryPalette: string[];
 }
 
 export type BankProvider =

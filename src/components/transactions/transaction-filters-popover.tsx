@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { Check, SlidersHorizontal, X } from "lucide-react";
+import { toast } from "sonner";
+import { Check, Pencil, SlidersHorizontal, X } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -20,11 +23,16 @@ import { categoryEmoji } from "@/lib/category-emoji";
 import { BANK_PROVIDERS, type Category } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/formatters";
-import type { TransactionAccount } from "@/lib/api";
+import { setCardNickname, type TransactionAccount } from "@/lib/api";
 
 export interface AdvancedFilters {
-  /** null shows both included and excluded rows. */
-  excluded: "hide" | "only" | null;
+  /**
+   * Visibility of rows that don't count toward totals (excluded rows and
+   * transfers, which mostly duplicate itemized card spending as the bank's
+   * billing line). Hidden by default: they say nothing about spending
+   * habits; the table footer still reports and reveals them.
+   */
+  notCounted: "all" | "hidden" | "only";
   /** Raw input strings; empty means unset. */
   amountMin: string;
   amountMax: string;
@@ -35,7 +43,7 @@ export interface AdvancedFilters {
 }
 
 export const EMPTY_ADVANCED_FILTERS: AdvancedFilters = {
-  excluded: null,
+  notCounted: "hidden",
   amountMin: "",
   amountMax: "",
   dateFrom: "",
@@ -45,11 +53,17 @@ export const EMPTY_ADVANCED_FILTERS: AdvancedFilters = {
 
 export function countActiveAdvancedFilters(value: AdvancedFilters): number {
   let count = 0;
-  if (value.excluded != null) count++;
+  if (value.notCounted !== "hidden") count++;
   if (value.amountMin || value.amountMax) count++;
   if (value.dateFrom || value.dateTo) count++;
   if (value.accountNumbers.length > 0) count++;
   return count;
+}
+
+function localDay(daysAgo = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 interface TransactionFiltersPopoverProps {
@@ -72,6 +86,34 @@ export function TransactionFiltersPopover({
   const t = useTranslations("transactions");
   const tBanks = useTranslations("banks");
   const tCat = useTranslations("categoriesSeeded");
+  const queryClient = useQueryClient();
+  const [editingAccount, setEditingAccount] = useState<string | null>(null);
+  const [nicknameDraft, setNicknameDraft] = useState("");
+
+  const nicknameMutation = useMutation({
+    mutationFn: ({
+      accountNumber,
+      nickname,
+    }: {
+      accountNumber: string;
+      nickname: string | null;
+    }) => setCardNickname(accountNumber, nickname),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transaction-accounts"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Failed");
+    },
+  });
+
+  const commitNickname = (accountNumber: string) => {
+    setEditingAccount(null);
+    nicknameMutation.mutate({
+      accountNumber,
+      nickname: nicknameDraft.trim() || null,
+    });
+  };
+
   const activeCount =
     countActiveAdvancedFilters(value) + (categoryFilter.length > 0 ? 1 : 0);
 
@@ -121,15 +163,21 @@ export function TransactionFiltersPopover({
   const set = (patch: Partial<AdvancedFilters>) =>
     onChange({ ...value, ...patch });
 
-  const excludedOptions: {
-    key: "all" | "hide" | "only";
-    filterValue: "hide" | "only" | null;
+  const notCountedOptions: {
+    filterValue: AdvancedFilters["notCounted"];
     label: string;
   }[] = [
-    { key: "all", filterValue: null, label: t("filterExcludedAll") },
-    { key: "hide", filterValue: "hide", label: t("filterExcludedHide") },
-    { key: "only", filterValue: "only", label: t("filterExcludedOnly") },
+    { filterValue: "hidden", label: t("filterNotCountedHidden") },
+    { filterValue: "all", label: t("filterNotCountedAll") },
+    { filterValue: "only", label: t("filterNotCountedOnly") },
   ];
+
+  // First interaction with an empty date range starts from a sensible
+  // window: the last 30 days.
+  const prefillDates = () => {
+    if (value.dateFrom || value.dateTo) return;
+    set({ dateFrom: localDay(30), dateTo: localDay(0) });
+  };
 
   return (
     <Popover>
@@ -154,17 +202,17 @@ export function TransactionFiltersPopover({
 
         <div className="space-y-1.5">
           <div className="text-xs font-medium text-foreground/80">
-            {t("filterExcludedLabel")}
+            {t("filterNotCountedLabel")}
           </div>
           <div className="flex items-center gap-1 rounded-full border border-border bg-muted/30 p-0.5">
-            {excludedOptions.map((opt) => (
+            {notCountedOptions.map((opt) => (
               <button
-                key={opt.key}
+                key={opt.filterValue}
                 type="button"
-                onClick={() => set({ excluded: opt.filterValue })}
+                onClick={() => set({ notCounted: opt.filterValue })}
                 className={cn(
                   "flex-1 rounded-full px-2 py-1 text-[11px] font-medium transition-colors",
-                  value.excluded === opt.filterValue
+                  value.notCounted === opt.filterValue
                     ? "bg-foreground text-background"
                     : "text-muted-foreground hover:text-foreground"
                 )}
@@ -173,6 +221,9 @@ export function TransactionFiltersPopover({
               </button>
             ))}
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            {t("filterNotCountedHint")}
+          </p>
         </div>
 
         <div className="space-y-1.5">
@@ -207,19 +258,26 @@ export function TransactionFiltersPopover({
             {t("filterDatesLabel")}
           </div>
           <div className="flex items-center gap-2">
-            <Input
-              type="date"
-              value={value.dateFrom}
-              onChange={(e) => set({ dateFrom: e.target.value })}
-              className="h-8"
-            />
-            <span className="text-xs text-muted-foreground">–</span>
-            <Input
-              type="date"
-              value={value.dateTo}
-              onChange={(e) => set({ dateTo: e.target.value })}
-              className="h-8"
-            />
+            <label className="flex flex-1 items-center gap-1.5 text-xs text-muted-foreground">
+              {t("filterDateFrom")}
+              <Input
+                type="date"
+                value={value.dateFrom}
+                onFocus={prefillDates}
+                onChange={(e) => set({ dateFrom: e.target.value })}
+                className="h-8"
+              />
+            </label>
+            <label className="flex flex-1 items-center gap-1.5 text-xs text-muted-foreground">
+              {t("filterDateTo")}
+              <Input
+                type="date"
+                value={value.dateTo}
+                onFocus={prefillDates}
+                onChange={(e) => set({ dateTo: e.target.value })}
+                className="h-8"
+              />
+            </label>
           </div>
           <p className="text-[11px] text-muted-foreground">
             {t("filterDatesHint")}
@@ -244,52 +302,90 @@ export function TransactionFiltersPopover({
                 const checked = value.accountNumbers.includes(
                   account.accountNumber
                 );
+                const isEditing = editingAccount === account.accountNumber;
                 return (
-                  <button
+                  <div
                     key={`${account.provider}:${account.accountNumber}`}
-                    type="button"
-                    onClick={() =>
-                      set({
-                        accountNumbers: checked
-                          ? value.accountNumbers.filter(
-                              (a) => a !== account.accountNumber
-                            )
-                          : [...value.accountNumbers, account.accountNumber],
-                      })
-                    }
-                    className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-start text-sm transition-colors hover:bg-accent"
+                    className="group flex w-full items-center gap-1 rounded-md transition-colors hover:bg-accent"
                   >
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border",
-                        checked
-                          ? "border-foreground bg-foreground text-background"
-                          : "border-border bg-card"
-                      )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        set({
+                          accountNumbers: checked
+                            ? value.accountNumbers.filter(
+                                (a) => a !== account.accountNumber
+                              )
+                            : [...value.accountNumbers, account.accountNumber],
+                        })
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-2 px-1.5 py-1 text-start text-sm"
                     >
-                      {checked && <Check className="h-3 w-3" strokeWidth={3} />}
-                    </span>
-                    {info ? (
-                      <ProviderBadge
-                        color={info.color}
-                        name={providerName}
-                        domain={info.domain}
-                        size={16}
-                        radius={5}
-                      />
-                    ) : null}
-                    <span className="min-w-0 flex-1 truncate text-xs">
-                      {providerName}
-                      <span className="text-muted-foreground">
-                        {" · "}
-                        {account.accountNumber}
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border",
+                          checked
+                            ? "border-foreground bg-foreground text-background"
+                            : "border-border bg-card"
+                        )}
+                      >
+                        {checked && (
+                          <Check className="h-3 w-3" strokeWidth={3} />
+                        )}
                       </span>
-                    </span>
-                    <span className="text-[10px] tabular-nums text-muted-foreground">
-                      {account.count}
-                    </span>
-                  </button>
+                      {info ? (
+                        <ProviderBadge
+                          color={info.color}
+                          name={providerName}
+                          domain={info.domain}
+                          size={16}
+                          radius={5}
+                        />
+                      ) : null}
+                      {isEditing ? (
+                        <Input
+                          autoFocus
+                          value={nicknameDraft}
+                          onChange={(e) => setNicknameDraft(e.target.value)}
+                          onBlur={() => commitNickname(account.accountNumber)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                            if (e.key === "Escape") setEditingAccount(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder={t("cardNicknamePlaceholder")}
+                          maxLength={64}
+                          className="h-6 flex-1 text-xs"
+                        />
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate text-xs">
+                          {account.nickname ?? providerName}
+                          <span className="text-muted-foreground">
+                            {" · "}
+                            {account.accountNumber.slice(-4)}
+                          </span>
+                        </span>
+                      )}
+                      <span className="text-[10px] tabular-nums text-muted-foreground">
+                        {account.count}
+                      </span>
+                    </button>
+                    {!isEditing && (
+                      <button
+                        type="button"
+                        title={t("cardNicknameEdit")}
+                        aria-label={t("cardNicknameEdit")}
+                        onClick={() => {
+                          setEditingAccount(account.accountNumber);
+                          setNicknameDraft(account.nickname ?? "");
+                        }}
+                        className="me-1 hidden h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground group-hover:flex"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -381,14 +477,14 @@ export function ActiveFilterChips({
     })),
   ];
 
-  if (value.excluded != null) {
+  if (value.notCounted !== "hidden") {
     chips.push({
-      key: "excluded",
+      key: "notCounted",
       label:
-        value.excluded === "hide"
-          ? t("filterExcludedHide")
-          : t("filterExcludedOnly"),
-      onRemove: () => onChange({ ...value, excluded: null }),
+        value.notCounted === "all"
+          ? t("filterNotCountedAll")
+          : t("filterNotCountedOnly"),
+      onRemove: () => onChange({ ...value, notCounted: "hidden" }),
     });
   }
   if (value.amountMin || value.amountMax) {

@@ -310,11 +310,14 @@ export interface TransactionListFilter {
   credentialIds?: number[];
   /**
    * Visibility of rows that don't count toward totals (excluded rows and
-   * transfers, which are mostly card-billing duplicates of itemized card
-   * spending): "hidden" drops them, "only" isolates them for review, and
-   * "all"/unset shows everything.
+   * user-marked transfers): "hidden" drops them, "only" isolates them for
+   * review, and "all"/unset shows everything. Auto-detected transfers are
+   * a separate case: they're the bank's billing line duplicating itemized
+   * card spending, so the list NEVER shows them (see includeDuplicates).
    */
   notCounted?: "all" | "hidden" | "only";
+  /** Escape hatch for validation tooling; no UI sets this. */
+  includeDuplicates?: boolean;
   /** Magnitude bounds, applied to ABS(charged_amount). */
   amountMin?: number;
   amountMax?: number;
@@ -393,6 +396,12 @@ function buildListConditions(
   if (kind !== "all") {
     conditions.push("t.kind = ?");
     values.push(kind);
+  }
+  // Card-billing duplicates (auto-detected transfers) never appear: they
+  // mirror spending that's already itemized on the card side and teach
+  // nothing. A transfer the user marked themselves stays visible.
+  if (!params.includeDuplicates) {
+    conditions.push("(t.kind != 'transfer' OR t.kind_source != 'auto')");
   }
   if (params.notCounted === "only") {
     conditions.push("(t.is_excluded = 1 OR t.kind = 'transfer')");
@@ -932,6 +941,8 @@ export interface TransactionAccount {
   accountNumber: string;
   count: number;
   nickname: string | null;
+  cardType: "credit" | "debit" | "prepaid" | null;
+  billingDay: number | null;
 }
 
 /** Distinct cards/accounts that appear on this workspace's transactions. */
@@ -941,11 +952,12 @@ export function listTransactionAccounts(
   return getDb()
     .prepare(
       `SELECT t.provider, t.account_number as accountNumber, COUNT(*) as count,
-              cn.nickname as nickname
+              c.nickname as nickname, c.card_type as cardType,
+              c.billing_day as billingDay
        FROM transactions t
-       LEFT JOIN card_nicknames cn
-         ON cn.workspace_id = t.workspace_id
-        AND cn.account_number = t.account_number
+       LEFT JOIN cards c
+         ON c.workspace_id = t.workspace_id
+        AND c.account_number = t.account_number
        WHERE t.workspace_id = ?
        GROUP BY t.provider, t.account_number
        ORDER BY t.provider, t.account_number`
@@ -1271,12 +1283,20 @@ export interface TransactionsSummary {
   net: number;
   topMerchants: { description: string; total: number; count: number }[];
   pendingReviewCount: number;
-  /** Rows in range that don't count toward the totals above. */
+  /**
+   * Rows in range that don't count toward the totals above and are shown
+   * grayed in the list: excluded rows and user-marked transfers.
+   */
   notCounted: {
     count: number;
     total: number;
     excludedCount: number;
     transferCount: number;
+  };
+  /** Auto-detected card-billing transfers; never shown in the list. */
+  duplicates: {
+    count: number;
+    total: number;
   };
 }
 
@@ -1378,7 +1398,7 @@ export function getTransactionsSummary(
               COALESCE(SUM(CASE WHEN is_excluded = 0 AND kind = 'transfer' THEN 1 ELSE 0 END), 0) as transferCount
        FROM transactions
        WHERE ${ncConditions.join(" AND ")}
-         AND (is_excluded = 1 OR kind = 'transfer')`
+         AND (is_excluded = 1 OR (kind = 'transfer' AND kind_source = 'user'))`
     )
     .get(...ncValues) as {
     count: number;
@@ -1386,6 +1406,16 @@ export function getTransactionsSummary(
     excludedCount: number;
     transferCount: number;
   };
+
+  const duplicates = db
+    .prepare(
+      `SELECT COUNT(*) as count,
+              COALESCE(SUM(ABS(charged_amount)), 0) as total
+       FROM transactions
+       WHERE ${ncConditions.join(" AND ")}
+         AND is_excluded = 0 AND kind = 'transfer' AND kind_source = 'auto'`
+    )
+    .get(...ncValues) as { count: number; total: number };
 
   const pendingReview = db
     .prepare(
@@ -1410,6 +1440,7 @@ export function getTransactionsSummary(
     topMerchants: topMerchantsRows,
     pendingReviewCount: pendingReview.count,
     notCounted,
+    duplicates,
   };
 }
 

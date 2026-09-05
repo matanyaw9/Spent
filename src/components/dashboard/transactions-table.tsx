@@ -78,10 +78,10 @@ interface TransactionsTableProps {
   onSearchChange: (search: string) => void;
   /** True when any filter beyond the free-text search is active. */
   filtersActive: boolean;
-  /** Filter and add controls, rendered next to the search box. */
+  /** Extra controls (e.g. Add), rendered next to the search box. */
   headerSlot?: React.ReactNode;
-  /** Removable active-filter chips, rendered under the header row. */
-  chipsSlot?: React.ReactNode;
+  /** The inline filter bar, rendered under the title row. */
+  filterSlot?: React.ReactNode;
   page: number;
   onPageChange: (page: number) => void;
   sortField: TransactionSortField;
@@ -95,6 +95,7 @@ interface TransactionsTableProps {
   onSelectAllMatching: () => void;
   onClearSelection: () => void;
   notCounted?: TransactionsSummary["notCounted"];
+  duplicates?: TransactionsSummary["duplicates"];
   notCountedOnly: boolean;
   onNotCountedOnlyChange: (value: boolean) => void;
   /** account_number to user nickname, for the source column. */
@@ -111,7 +112,7 @@ export function TransactionsTable({
   onSearchChange,
   filtersActive,
   headerSlot,
-  chipsSlot,
+  filterSlot,
   page,
   onPageChange,
   sortField,
@@ -124,6 +125,7 @@ export function TransactionsTable({
   onSelectAllMatching,
   onClearSelection,
   notCounted,
+  duplicates,
   notCountedOnly,
   onNotCountedOnlyChange,
   cardNicknames,
@@ -338,7 +340,7 @@ export function TransactionsTable({
             {headerSlot}
           </div>
         </div>
-        {chipsSlot}
+        {filterSlot}
         {filtersActive || search.trim().length > 0 ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {t("filterScopedToList")}
@@ -398,13 +400,15 @@ export function TransactionsTable({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[36px]">
-                    <Checkbox
-                      checked={headerState}
-                      onClick={handleHeaderCheckbox}
-                      aria-label={t("bulkSelectAllOnPage")}
-                    />
-                  </TableHead>
+                  {hasSelectionActive && (
+                    <TableHead className="w-[36px]">
+                      <Checkbox
+                        checked={headerState}
+                        onClick={handleHeaderCheckbox}
+                        aria-label={t("bulkSelectAllOnPage")}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead className="w-[32px]" />
                   <SortableTableHead
                     label={t("headerDate")}
@@ -488,13 +492,15 @@ export function TransactionsTable({
                         hasSelectionActive && "select-none",
                       )}
                     >
-                      <TableCell>
-                        <Checkbox
-                          checked={selected}
-                          onClick={(e) => handleRowCheckbox(index, e)}
-                          aria-label={t("bulkSelectRow")}
-                        />
-                      </TableCell>
+                      {hasSelectionActive && (
+                        <TableCell>
+                          <Checkbox
+                            checked={selected}
+                            onClick={(e) => handleRowCheckbox(index, e)}
+                            aria-label={t("bulkSelectRow")}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
                         {isTransfer ? (
                           <div className="text-muted-foreground">
@@ -757,7 +763,10 @@ export function TransactionsTable({
             )}
           </>
         )}
-        {notCounted && (notCounted.count > 0 || notCountedOnly) && (
+        {notCounted &&
+          (notCounted.count > 0 ||
+            notCountedOnly ||
+            (duplicates?.count ?? 0) > 0) && (
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5">
             <span className="text-xs text-muted-foreground">
               {t("notCountedSummary", {
@@ -769,6 +778,15 @@ export function TransactionsTable({
                 excluded: notCounted.excludedCount,
                 transfers: notCounted.transferCount,
               })}
+              {duplicates && duplicates.count > 0 && (
+                <span className="text-muted-foreground/60">
+                  {" · "}
+                  {t("duplicatesHidden", {
+                    count: duplicates.count,
+                    amount: formatCurrency(duplicates.total, "ILS", locale),
+                  })}
+                </span>
+              )}
             </span>
             <Button
               type="button"

@@ -181,6 +181,10 @@ export interface TransactionsSummary {
     excludedCount: number;
     transferCount: number;
   };
+  duplicates: {
+    count: number;
+    total: number;
+  };
 }
 
 export function getTransactionsSummary(params: {
@@ -247,17 +251,26 @@ export interface TransactionAccount {
   accountNumber: string;
   count: number;
   nickname: string | null;
+  cardType: "credit" | "debit" | "prepaid" | null;
+  billingDay: number | null;
 }
 
 export function listTransactionAccounts() {
   return fetchJSON<TransactionAccount[]>("/api/transactions/accounts");
 }
 
-export function setCardNickname(accountNumber: string, nickname: string | null) {
+export function updateCardSettings(
+  accountNumber: string,
+  settings: {
+    nickname?: string | null;
+    cardType?: "credit" | "debit" | "prepaid" | null;
+    billingDay?: number | null;
+  }
+) {
   return fetchJSON<{ success: boolean }>("/api/transactions/accounts", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountNumber, nickname }),
+    body: JSON.stringify({ accountNumber, ...settings }),
   });
 }
 

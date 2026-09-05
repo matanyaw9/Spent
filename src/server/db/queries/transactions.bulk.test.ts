@@ -22,6 +22,7 @@ let seq = 0;
 interface SeedTxn {
   amount: number;
   kind: "expense" | "income" | "transfer";
+  kindSource?: "auto" | "user";
   excluded?: boolean;
   description?: string;
   date?: string;
@@ -37,9 +38,9 @@ function insertTxn(t: SeedTxn): number {
          workspace_id, account_number, date, processed_date,
          original_amount, original_currency, charged_amount, description,
          type, status, provider, sync_run_id, dedup_hash, dedup_sequence,
-         kind, is_excluded
+         kind, kind_source, is_excluded
        ) VALUES (?, ?, ?, ?, ?, 'ILS', ?, ?, 'normal', 'completed',
-                 'isracard', 1, ?, 0, ?, ?)`
+                 'isracard', 1, ?, 0, ?, ?, ?)`
     )
     .run(
       WS,
@@ -51,6 +52,7 @@ function insertTxn(t: SeedTxn): number {
       t.description ?? `merchant-${seq}`,
       `hash-${seq}`,
       t.kind,
+      t.kindSource ?? "auto",
       t.excluded ? 1 : 0
     );
   return Number(result.lastInsertRowid);
@@ -207,7 +209,7 @@ describe("resolveFilteredTransactionIds", () => {
     expect(expenseIds).toContain(refund);
   });
 
-  it("notCounted returns exactly the excluded and transfer rows", () => {
+  it("notCounted 'only' returns excluded rows and user transfers", () => {
     const counted = insertTxn({
       amount: -70,
       kind: "expense",
@@ -222,6 +224,7 @@ describe("resolveFilteredTransactionIds", () => {
     const transfer = insertTxn({
       amount: -90,
       kind: "transfer",
+      kindSource: "user",
       date: "2029-05-14",
     });
 
@@ -246,7 +249,7 @@ describe("resolveFilteredTransactionIds", () => {
 describe("advanced list filters", () => {
   const range = { from: "2031-03-01", to: "2031-03-31" };
 
-  it("not-counted visibility hides or isolates excluded and transfer rows", () => {
+  it("not-counted visibility handles user transfers; duplicates never list", () => {
     const kept = insertTxn({ amount: -10, kind: "expense", date: "2031-03-05" });
     const excluded = insertTxn({
       amount: -20,
@@ -254,10 +257,17 @@ describe("advanced list filters", () => {
       excluded: true,
       date: "2031-03-06",
     });
-    const transfer = insertTxn({
+    const userTransfer = insertTxn({
       amount: -500,
       kind: "transfer",
+      kindSource: "user",
       date: "2031-03-07",
+    });
+    const duplicate = insertTxn({
+      amount: -900,
+      kind: "transfer",
+      kindSource: "auto",
+      date: "2031-03-08",
     });
 
     const hidden = queries.resolveFilteredTransactionIds(WS, {
@@ -266,13 +276,19 @@ describe("advanced list filters", () => {
     });
     expect(hidden).toContain(kept);
     expect(hidden).not.toContain(excluded);
-    expect(hidden).not.toContain(transfer);
+    expect(hidden).not.toContain(userTransfer);
+    expect(hidden).not.toContain(duplicate);
 
     const only = queries.resolveFilteredTransactionIds(WS, {
       ...range,
       notCounted: "only",
     });
-    expect(only).toEqual([excluded, transfer]);
+    expect(only).toEqual([excluded, userTransfer]);
+
+    // Even "show all" never surfaces the auto-detected billing duplicate.
+    const all = queries.resolveFilteredTransactionIds(WS, { ...range });
+    expect(all).toContain(userTransfer);
+    expect(all).not.toContain(duplicate);
   });
 
   it("amount bounds apply to the magnitude, not the sign", () => {
@@ -558,17 +574,30 @@ describe("notes and nicknames", () => {
     expect(note()).toBeNull();
   });
 
-  it("upserts card nicknames and joins them into the accounts list", async () => {
-    const nicknames = await import("./card-nicknames");
+  it("merges card settings and joins them into the accounts list", async () => {
+    const cards = await import("./cards");
     insertTxn({ amount: -10, kind: "expense", accountNumber: "5555" });
-    nicknames.setCardNickname(WS, "5555", "My gold card");
-    nicknames.setCardNickname(WS, "5555", "Gold card");
+    cards.updateCardSettings(WS, "5555", { nickname: "Gold card" });
+    cards.updateCardSettings(WS, "5555", {
+      cardType: "credit",
+      billingDay: 10,
+    });
 
-    const accounts = queries.listTransactionAccounts(WS);
-    const row = accounts.find((a) => a.accountNumber === "5555");
-    expect(row?.nickname).toBe("Gold card");
+    const row = queries
+      .listTransactionAccounts(WS)
+      .find((a) => a.accountNumber === "5555");
+    // Partial updates merge: the nickname survives the type/day write.
+    expect(row).toMatchObject({
+      nickname: "Gold card",
+      cardType: "credit",
+      billingDay: 10,
+    });
 
-    nicknames.setCardNickname(WS, "5555", null);
+    cards.updateCardSettings(WS, "5555", {
+      nickname: null,
+      cardType: null,
+      billingDay: null,
+    });
     expect(
       queries
         .listTransactionAccounts(WS)
@@ -608,7 +637,9 @@ describe("getTransactionsSummary", () => {
     insertTxn({ amount: -400, kind: "expense", date });
     // A refund: positive amount on an expense row reduces spending.
     insertTxn({ amount: 50, kind: "expense", date });
-    insertTxn({ amount: -2000, kind: "transfer", date });
+    // Auto transfer = card-billing duplicate; user transfer = intentional.
+    insertTxn({ amount: -2000, kind: "transfer", kindSource: "auto", date });
+    insertTxn({ amount: -300, kind: "transfer", kindSource: "user", date });
     insertTxn({ amount: -100, kind: "expense", excluded: true, date });
 
     const summary = queries.getTransactionsSummary(
@@ -622,9 +653,10 @@ describe("getTransactionsSummary", () => {
     expect(summary.net).toBe(650);
     expect(summary.notCounted).toEqual({
       count: 2,
-      total: 2100,
+      total: 400,
       excludedCount: 1,
       transferCount: 1,
     });
+    expect(summary.duplicates).toEqual({ count: 1, total: 2000 });
   });
 });

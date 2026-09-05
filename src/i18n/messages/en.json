@@ -217,7 +217,6 @@
     "kpiIncomeHint": "Rows marked as income. Excluded rows and transfers are not counted.",
     "kpiExpensesHint": "Rows marked as expenses. Excluded rows and transfers are not counted.",
     "kpiNetHint": "Income minus expenses. Excluded rows and transfers are not counted.",
-    "filtersButton": "Filters",
     "filterNotCountedLabel": "Not counted (transfers & excluded)",
     "filterNotCountedHidden": "Hidden",
     "filterNotCountedAll": "Show all",
@@ -225,8 +224,6 @@
     "filterNotCountedHint": "Transfers are usually the bank's billing line duplicating your card spending, so they're hidden by default.",
     "filterDateFrom": "From",
     "filterDateTo": "To",
-    "cardNicknameEdit": "Rename card",
-    "cardNicknamePlaceholder": "Card nickname",
     "noteAdd": "Add note",
     "noteEdit": "Edit note",
     "noteRemove": "Remove note",
@@ -237,6 +234,9 @@
     "filterAmountMax": "Max",
     "filterDatesLabel": "Date range",
     "filterDatesHint": "Overrides the month selector while set.",
+    "filterDatesMonth": "This month",
+    "filterNotCountedShort": "Not counted",
+    "duplicatesHidden": "{count} card-billing duplicates hidden ({amount})",
     "filterCardLabel": "Card / account",
     "filterClearAll": "Clear filters",
     "categorySearchPlaceholder": "Search or create...",
@@ -337,6 +337,18 @@
     "ofBudget": "of {amount}"
   },
   "settings": {
+    "cards": {
+      "title": "Credit cards",
+      "description": "Cards your syncs have seen. Nicknames show on transactions instead of the provider name.",
+      "nicknamePlaceholder": "Nickname",
+      "typeUnset": "Type not set",
+      "typeCredit": "Credit",
+      "typeDebit": "Debit",
+      "typePrepaid": "Prepaid",
+      "billingDay": "Billing day",
+      "billingDayUnset": "No billing day",
+      "billingDayOption": "Charged on the {day}"
+    },
     "pageTitle": "Settings",
     "sidebar": {
       "title": "Settings",

@@ -217,7 +217,6 @@
     "kpiIncomeHint": "תנועות המסומנות כהכנסה. תנועות מוחרגות והעברות אינן נספרות.",
     "kpiExpensesHint": "תנועות המסומנות כהוצאה. תנועות מוחרגות והעברות אינן נספרות.",
     "kpiNetHint": "הכנסות פחות הוצאות. תנועות מוחרגות והעברות אינן נספרות.",
-    "filtersButton": "סינון",
     "filterNotCountedLabel": "לא נספרות (העברות ומוחרגות)",
     "filterNotCountedHidden": "מוסתרות",
     "filterNotCountedAll": "הצגת הכול",
@@ -225,8 +224,6 @@
     "filterNotCountedHint": "העברות הן בדרך כלל שורת החיוב של הבנק שמכפילה את הוצאות הכרטיס, ולכן הן מוסתרות כברירת מחדל.",
     "filterDateFrom": "מתאריך",
     "filterDateTo": "עד",
-    "cardNicknameEdit": "שינוי כינוי לכרטיס",
-    "cardNicknamePlaceholder": "כינוי לכרטיס",
     "noteAdd": "הוספת הערה",
     "noteEdit": "עריכת הערה",
     "noteRemove": "מחיקת הערה",
@@ -237,6 +234,9 @@
     "filterAmountMax": "מקסימום",
     "filterDatesLabel": "טווח תאריכים",
     "filterDatesHint": "גובר על בורר החודש כל עוד מוגדר.",
+    "filterDatesMonth": "החודש הנוכחי",
+    "filterNotCountedShort": "לא נספרות",
+    "duplicatesHidden": "{count} כפילויות חיוב כרטיס מוסתרות ({amount})",
     "filterCardLabel": "כרטיס / חשבון",
     "filterClearAll": "ניקוי סינון",
     "categorySearchPlaceholder": "חיפוש או יצירה...",
@@ -337,6 +337,18 @@
     "ofBudget": "מתוך {amount}"
   },
   "settings": {
+    "cards": {
+      "title": "כרטיסי אשראי",
+      "description": "כרטיסים שהסנכרונים זיהו. כינוי יוצג בתנועות במקום שם הספק.",
+      "nicknamePlaceholder": "כינוי",
+      "typeUnset": "סוג לא הוגדר",
+      "typeCredit": "אשראי",
+      "typeDebit": "חיוב מיידי",
+      "typePrepaid": "נטען",
+      "billingDay": "יום חיוב",
+      "billingDayUnset": "ללא יום חיוב",
+      "billingDayOption": "חיוב ב-{day} לחודש"
+    },
     "pageTitle": "הגדרות",
     "sidebar": {
       "title": "הגדרות",

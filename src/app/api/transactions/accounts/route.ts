@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { listTransactionAccounts } from "@/server/db/queries/transactions";
-import { setCardNickname } from "@/server/db/queries/card-nicknames";
+import { updateCardSettings } from "@/server/db/queries/cards";
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
 
 export async function GET(request: Request) {
@@ -8,12 +8,14 @@ export async function GET(request: Request) {
   return NextResponse.json(listTransactionAccounts(workspaceId));
 }
 
-/** Set or clear (empty/null) a card's nickname. */
+/** Merge card settings: nickname, card type, billing day. */
 export async function PUT(request: Request) {
   const workspaceId = getWorkspaceIdFromRequest(request);
   const body = (await request.json().catch(() => ({}))) as {
     accountNumber?: unknown;
     nickname?: unknown;
+    cardType?: unknown;
+    billingDay?: unknown;
   };
   if (typeof body.accountNumber !== "string" || !body.accountNumber.trim()) {
     return NextResponse.json(
@@ -21,14 +23,54 @@ export async function PUT(request: Request) {
       { status: 400 }
     );
   }
-  if (body.nickname !== null && typeof body.nickname !== "string") {
-    return NextResponse.json(
-      { error: "nickname must be a string or null" },
-      { status: 400 }
-    );
+
+  const input: {
+    nickname?: string | null;
+    cardType?: "credit" | "debit" | "prepaid" | null;
+    billingDay?: number | null;
+  } = {};
+
+  if (body.nickname !== undefined) {
+    if (body.nickname !== null && typeof body.nickname !== "string") {
+      return NextResponse.json(
+        { error: "nickname must be a string or null" },
+        { status: 400 }
+      );
+    }
+    input.nickname =
+      typeof body.nickname === "string"
+        ? body.nickname.trim().slice(0, 64) || null
+        : null;
   }
-  const nickname =
-    typeof body.nickname === "string" ? body.nickname.trim().slice(0, 64) : null;
-  setCardNickname(workspaceId, body.accountNumber.trim(), nickname || null);
+  if (body.cardType !== undefined) {
+    if (
+      body.cardType !== null &&
+      body.cardType !== "credit" &&
+      body.cardType !== "debit" &&
+      body.cardType !== "prepaid"
+    ) {
+      return NextResponse.json(
+        { error: "cardType must be 'credit', 'debit', 'prepaid', or null" },
+        { status: 400 }
+      );
+    }
+    input.cardType = body.cardType;
+  }
+  if (body.billingDay !== undefined) {
+    if (body.billingDay !== null) {
+      const day = Number(body.billingDay);
+      if (!Number.isInteger(day) || day < 1 || day > 28) {
+        return NextResponse.json(
+          { error: "billingDay must be 1-28 or null" },
+          { status: 400 }
+        );
+      }
+      input.billingDay = day;
+    } else {
+      input.billingDay = null;
+    }
+  }
+
+  updateCardSettings(workspaceId, body.accountNumber.trim(), input);
   return NextResponse.json({ success: true });
 }

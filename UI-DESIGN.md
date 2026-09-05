@@ -253,6 +253,18 @@ the whole color palette editable per swatch, and category creation
 with a parent at any depth (children inherit the parent's color
 family; summary rollups recurse).
 
+Status 2026-09-05, fifth wave: auto-detected card-billing transfers
+(duplicates) never appear in the list at all; the footer reports how
+many are hidden. The not-counted tri-state now governs only excluded
+rows and user-marked transfers. All filters moved onto one inline bar
+under the table title (kind, category, card, amount, dates,
+not-counted; each control announces its state) replacing the compressed
+Filters button and the chips. A Credit cards section in bank settings
+edits nickname, card type, and billing day per card. Filter changes
+keep the selection (only select-all-matching resets), and the checkbox
+column appears only while something is selected; a row click starts a
+selection.
+
 ## Open questions
 
 - Should interest on a loan repayment be split automatically when the

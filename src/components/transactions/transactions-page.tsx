@@ -17,12 +17,11 @@ import { WidgetsRow } from "./widgets-row";
 import { BulkActionBar } from "./bulk-action-bar";
 import { AddTransactionDialog } from "./add-transaction-dialog";
 import {
-  TransactionFiltersPopover,
-  ActiveFilterChips,
+  TransactionFilterBar,
   EMPTY_ADVANCED_FILTERS,
   countActiveAdvancedFilters,
   type AdvancedFilters,
-} from "./transaction-filters-popover";
+} from "./transaction-filter-bar";
 import {
   bulkUpdateTransactions,
   getCategories,
@@ -62,12 +61,6 @@ export function TransactionsPage() {
   const [bulkPending, setBulkPending] = useState(false);
   const queryClient = useQueryClient();
 
-  const filterOptions: { value: TransactionKindFilter; label: string }[] = [
-    { value: "all", label: t("filterAll") },
-    { value: "income", label: t("filterIncome") },
-    { value: "expense", label: t("filterExpenses") },
-  ];
-
   const monthRange = getMonthRange(selectedDate);
   // Custom dates from the filters popover override the month selector.
   const from = advancedFilters.dateFrom || monthRange.from;
@@ -89,8 +82,10 @@ export function TransactionsPage() {
       ? advancedFilters.accountNumbers
       : undefined;
 
-  // A selection only makes sense against the filter it was made under, so
-  // drop it whenever the filter changes (guarded update during render).
+  // Changing filters keeps the concrete selection (ids stay valid even
+  // when rows scroll out of the current view); only the abstract "all
+  // matching" mode is filter-relative and must reset (guarded update
+  // during render).
   const filterKey = JSON.stringify([
     from,
     to,
@@ -102,7 +97,6 @@ export function TransactionsPage() {
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
-    setSelectedIds(new Set());
     setAllMatching(false);
   }
 
@@ -306,30 +300,6 @@ export function TransactionsPage() {
           loading={summaryInitialLoading}
         />
 
-        <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-border bg-card p-1 w-fit">
-          {filterOptions.map((opt) => {
-            const active = kind === opt.value;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => {
-                  setKind(opt.value);
-                  setPage(0);
-                  setCategoryFilter([]);
-                }}
-                className={
-                  active
-                    ? "rounded-full bg-foreground px-4 py-1.5 text-xs font-medium text-background transition-colors"
-                    : "rounded-full px-4 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                }
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-
         <div data-keep-selection>
         <TransactionsTable
           transactions={transactionsQuery.data?.transactions ?? []}
@@ -337,34 +307,23 @@ export function TransactionsPage() {
           loading={tableInitialLoading}
           filtersActive={
             categoryFilter.length > 0 ||
+            kind !== "all" ||
             countActiveAdvancedFilters(advancedFilters) > 0
           }
-          headerSlot={
-            <>
-              <TransactionFiltersPopover
-                value={advancedFilters}
-                onChange={(next) => {
-                  setAdvancedFilters(next);
-                  setPage(0);
-                }}
-                accounts={accountsQuery.data ?? []}
-                categories={allCategoriesQuery.data ?? []}
-                categoryFilter={categoryFilter}
-                onCategoryFilterChange={(ids) => {
-                  setCategoryFilter(ids);
-                  setPage(0);
-                }}
-              />
-              <AddTransactionDialog />
-            </>
-          }
-          chipsSlot={
-            <ActiveFilterChips
+          headerSlot={<AddTransactionDialog />}
+          filterSlot={
+            <TransactionFilterBar
+              kind={kind}
+              onKindChange={(next) => {
+                setKind(next);
+                setPage(0);
+              }}
               value={advancedFilters}
               onChange={(next) => {
                 setAdvancedFilters(next);
                 setPage(0);
               }}
+              accounts={accountsQuery.data ?? []}
               categories={allCategoriesQuery.data ?? []}
               categoryFilter={categoryFilter}
               onCategoryFilterChange={(ids) => {
@@ -392,6 +351,7 @@ export function TransactionsPage() {
           onSelectAllMatching={() => setAllMatching(true)}
           onClearSelection={clearSelection}
           notCounted={summaryQuery.data?.notCounted}
+          duplicates={summaryQuery.data?.duplicates}
           notCountedOnly={advancedFilters.notCounted === "only"}
           onNotCountedOnlyChange={(value) => {
             setAdvancedFilters((prev) => ({

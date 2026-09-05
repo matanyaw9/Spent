@@ -184,9 +184,8 @@ export type SetParentResult =
       reason:
         | "not-found"
         | "target-not-found"
-        | "not-leaf-target"
         | "kind-mismatch"
-        | "child-has-children"
+        | "cycle"
         | "self-parent";
     };
 
@@ -211,20 +210,21 @@ export function setCategoryParent(
 
     const target = getCategoryById(workspaceId, parentId);
     if (!target) return { ok: false, reason: "target-not-found" };
-    if (target.parentId !== null) {
-      return { ok: false, reason: "not-leaf-target" };
-    }
     if (target.kind !== child.kind) {
       return { ok: false, reason: "kind-mismatch" };
     }
 
-    const hasOwnChildren = db
-      .prepare(
-        "SELECT 1 FROM categories WHERE workspace_id = ? AND parent_id = ? LIMIT 1"
-      )
-      .get(workspaceId, childId);
-    if (hasOwnChildren) {
-      return { ok: false, reason: "child-has-children" };
+    // Any category may be a parent (grandparents included); the only
+    // structural rule is no cycles: the target must not sit anywhere
+    // below the child.
+    let cursor: Category | null = target;
+    const seen = new Set<number>();
+    while (cursor?.parentId != null && !seen.has(cursor.parentId)) {
+      if (cursor.parentId === childId) {
+        return { ok: false, reason: "cycle" };
+      }
+      seen.add(cursor.parentId);
+      cursor = getCategoryById(workspaceId, cursor.parentId);
     }
   }
 
@@ -305,6 +305,62 @@ export const SEEDED_CATEGORY_PARENTS: Record<string, string> = {
   "Fees & Taxes": "Money Movement",
 };
 
+function hexToHsl(hex: string): { h: number; s: number; l: number } {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h: number;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return { h, s, l };
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const hue = ((h % 1) + 1) % 1;
+  const f = (n: number) => {
+    const k = (n + hue * 12) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(c * 255)
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function hashSeed(seed: string): number {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * A child category defaults to its parent's color theme: same hue, with
+ * lightness and saturation nudged deterministically by the child's name so
+ * siblings stay distinguishable.
+ */
+export function deriveChildColor(parentHex: string, seed: string): string {
+  if (!/^#[0-9a-fA-F]{6}$/.test(parentHex)) return pickColor(seed);
+  const { h, s, l } = hexToHsl(parentHex);
+  const n = hashSeed(seed.toLowerCase());
+  const lightShift = ((n % 5) - 2) * 0.055;
+  const satShift = (((n >> 3) % 3) - 1) * 0.08;
+  return hslToHex(
+    h,
+    Math.min(0.85, Math.max(0.15, s + satShift)),
+    Math.min(0.85, Math.max(0.3, l + lightShift))
+  );
+}
+
 // New categories get a deterministic color via a hash of the name so the
 // same proposal always gets the same color. Palette lives in
 // src/lib/category-palette.ts, shared with the color picker UI.
@@ -328,20 +384,35 @@ export function ensureCategory(
   workspaceId: number,
   name: string,
   icon = "circle-dot",
-  kind: CategoryKind = "expense"
+  kind: CategoryKind = "expense",
+  opts?: { parentId?: number | null }
 ): Category {
   const trimmed = name.trim();
   const existing = getCategoryByName(workspaceId, trimmed);
   if (existing) return existing;
 
-  const parentName = SEEDED_CATEGORY_PARENTS[trimmed];
   let parentId: number | null = null;
-  if (parentName) {
-    const parent = getCategoryByName(workspaceId, parentName);
-    if (parent && parent.parentId === null) parentId = parent.id;
+  let parentColor: string | null = null;
+  if (opts?.parentId != null) {
+    const parent = getCategoryById(workspaceId, opts.parentId);
+    if (!parent) throw new Error("parent category not found");
+    if (parent.kind !== kind) throw new Error("kind-mismatch");
+    parentId = parent.id;
+    parentColor = parent.color;
+  } else {
+    const parentName = SEEDED_CATEGORY_PARENTS[trimmed];
+    if (parentName) {
+      const parent = getCategoryByName(workspaceId, parentName);
+      if (parent && parent.parentId === null) {
+        parentId = parent.id;
+        parentColor = parent.color;
+      }
+    }
   }
 
-  const color = pickColor(trimmed.toLowerCase());
+  const color = parentColor
+    ? deriveChildColor(parentColor, trimmed)
+    : pickColor(trimmed.toLowerCase());
   const result = getDb()
     .prepare(
       "INSERT INTO categories (workspace_id, parent_id, name, color, icon, kind) VALUES (?, ?, ?, ?, ?, ?)"

@@ -45,6 +45,7 @@ import {
 } from "@/lib/api";
 import { CATEGORY_COLOR_PALETTE } from "@/lib/category-palette";
 import { categoryEmoji } from "@/lib/category-emoji";
+import { getCategoryDescendantIds } from "@/lib/transaction-filters";
 import { cn } from "@/lib/utils";
 import type { Category, CategoryWithData } from "@/lib/types";
 
@@ -111,8 +112,13 @@ function Body({
   const sameKind = allCategories.filter(
     (c) => c.kind === category.kind && c.id !== category.id
   );
+  // Any category can be a parent, at any depth; only this category's own
+  // subtree is off-limits (that would make a cycle).
+  const descendantIds = new Set(
+    getCategoryDescendantIds(category.id, allCategories)
+  );
   const eligibleParents = sameKind
-    .filter((c) => c.parentId == null)
+    .filter((c) => !descendantIds.has(c.id))
     .sort((a, b) => a.name.localeCompare(b.name));
   const childCategories = useMemo(
     () =>
@@ -436,12 +442,8 @@ function GroupSection({
       const reason = err.message;
       if (reason === "kind-mismatch") {
         toast.error("Parent must be the same kind (expense or income).");
-      } else if (reason === "not-leaf-target") {
-        toast.error("Parent must be a top-level category.");
-      } else if (reason === "child-has-children") {
-        toast.error(
-          "Can't move a category that already has sub-categories under it."
-        );
+      } else if (reason === "cycle") {
+        toast.error("That would make a category its own ancestor.");
       } else {
         toast.error("Couldn't update parent.");
       }
@@ -571,8 +573,14 @@ function ColorSection({ category }: { category: Category }) {
     queryKey: ["settings"],
     queryFn: () => getSettings(),
   });
-  const customColors = settingsQuery.data?.customCategoryColors ?? [];
-  const [pendingColor, setPendingColor] = useState<string | null>(null);
+  const palette = settingsQuery.data?.categoryPalette ?? [
+    ...CATEGORY_COLOR_PALETTE,
+  ];
+  const [pendingNew, setPendingNew] = useState<string | null>(null);
+  const [editState, setEditState] = useState<{
+    index: number;
+    value: string;
+  } | null>(null);
 
   const applyMutation = useMutation({
     mutationFn: (color: string) => updateCategoryColor(category.id, color),
@@ -590,7 +598,7 @@ function ColorSection({ category }: { category: Category }) {
 
   const paletteMutation = useMutation({
     mutationFn: (colors: string[]) =>
-      updateSettings({ customCategoryColors: colors }),
+      updateSettings({ categoryPalette: colors }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
@@ -599,56 +607,36 @@ function ColorSection({ category }: { category: Category }) {
     },
   });
 
-  // Committing on blur (when the native picker closes) avoids saving a
-  // palette entry for every drag tick inside the color dialog.
-  const commitCustomColor = () => {
-    if (!pendingColor) return;
-    const color = pendingColor;
-    setPendingColor(null);
+  // New colors and edits commit when the native picker closes (blur), not
+  // on every drag tick inside the color dialog.
+  const commitNewColor = () => {
+    if (!pendingNew) return;
+    const color = pendingNew;
+    setPendingNew(null);
     applyMutation.mutate(color);
-    const inBuiltIn = CATEGORY_COLOR_PALETTE.some(
-      (c) => c.toLowerCase() === color.toLowerCase()
-    );
-    const inCustom = customColors.some(
-      (c) => c.toLowerCase() === color.toLowerCase()
-    );
-    if (!inBuiltIn && !inCustom) {
-      paletteMutation.mutate([...customColors, color]);
+    if (!palette.some((c) => c.toLowerCase() === color.toLowerCase())) {
+      paletteMutation.mutate([...palette, color]);
     }
   };
 
-  const removeCustomColor = (color: string) => {
-    paletteMutation.mutate(customColors.filter((c) => c !== color));
+  const commitEdit = () => {
+    if (!editState) return;
+    const { index, value } = editState;
+    setEditState(null);
+    const previous = palette[index];
+    if (!previous || previous.toLowerCase() === value.toLowerCase()) return;
+    const next = [...palette];
+    next[index] = value;
+    paletteMutation.mutate(next);
+    // Editing a swatch recolors this category too when it was using it.
+    if (category.color.toLowerCase() === previous.toLowerCase()) {
+      applyMutation.mutate(value);
+    }
   };
 
-  const swatch = (color: string, custom: boolean) => (
-    <span key={color} className="group relative inline-flex">
-      <button
-        type="button"
-        disabled={applyMutation.isPending}
-        onClick={() => applyMutation.mutate(color)}
-        aria-label={`Use ${color}`}
-        className={cn(
-          "h-7 w-7 rounded-full border transition-transform hover:scale-110",
-          category.color.toLowerCase() === color.toLowerCase()
-            ? "border-foreground ring-2 ring-foreground/30"
-            : "border-border"
-        )}
-        style={{ backgroundColor: color }}
-      />
-      {custom && (
-        <button
-          type="button"
-          onClick={() => removeCustomColor(color)}
-          aria-label={`Remove ${color} from palette`}
-          title="Remove from palette"
-          className="absolute -end-1 -top-1 hidden h-3.5 w-3.5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground group-hover:flex"
-        >
-          <Trash2 className="h-2 w-2" />
-        </button>
-      )}
-    </span>
-  );
+  const removeColor = (index: number) => {
+    paletteMutation.mutate(palette.filter((_, i) => i !== index));
+  };
 
   return (
     <section>
@@ -656,29 +644,70 @@ function ColorSection({ category }: { category: Category }) {
         Color
       </div>
       <div className="mt-3 rounded-xl border border-border bg-card p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          {CATEGORY_COLOR_PALETTE.map((color) => swatch(color, false))}
-          {customColors.map((color) => swatch(color, true))}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {palette.map((color, index) => (
+            <span key={`${color}-${index}`} className="group relative inline-flex">
+              <button
+                type="button"
+                disabled={applyMutation.isPending}
+                onClick={() => applyMutation.mutate(color)}
+                aria-label={`Use ${color}`}
+                className={cn(
+                  "h-7 w-7 rounded-full border transition-transform hover:scale-110",
+                  category.color.toLowerCase() === color.toLowerCase()
+                    ? "border-foreground ring-2 ring-foreground/30"
+                    : "border-border"
+                )}
+                style={{
+                  backgroundColor:
+                    editState?.index === index ? editState.value : color,
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => removeColor(index)}
+                aria-label={`Remove ${color} from palette`}
+                title="Remove from palette"
+                className="absolute -end-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-destructive group-hover:flex"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+              </button>
+              <label
+                aria-label={`Edit ${color}`}
+                title="Edit this color"
+                className="absolute -bottom-1.5 -end-1.5 hidden h-4 w-4 cursor-pointer items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground group-hover:flex"
+              >
+                <Palette className="h-2.5 w-2.5" />
+                <input
+                  type="color"
+                  value={editState?.index === index ? editState.value : color}
+                  onChange={(e) =>
+                    setEditState({ index, value: e.target.value })
+                  }
+                  onBlur={commitEdit}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                />
+              </label>
+            </span>
+          ))}
           <label
-            title="Pick a custom color (it joins the palette)"
+            title="Add a color to the palette"
             className="relative flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:text-foreground"
-            style={
-              pendingColor ? { backgroundColor: pendingColor } : undefined
-            }
+            style={pendingNew ? { backgroundColor: pendingNew } : undefined}
           >
             <Palette className="h-3.5 w-3.5" />
             <input
               type="color"
-              value={pendingColor ?? category.color}
-              onChange={(e) => setPendingColor(e.target.value)}
-              onBlur={commitCustomColor}
+              value={pendingNew ?? category.color}
+              onChange={(e) => setPendingNew(e.target.value)}
+              onBlur={commitNewColor}
               className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
             />
           </label>
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          Used for this category&apos;s badge, charts, and budget cards.
-          Custom picks are saved to the palette; hover one to remove it.
+          Click a swatch to use it. Hover one to edit or remove it from the
+          palette; the dashed circle adds a new color.
         </p>
       </div>
     </section>

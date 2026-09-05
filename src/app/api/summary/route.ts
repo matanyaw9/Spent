@@ -174,21 +174,30 @@ export async function GET(request: Request) {
     };
   }
 
-  // Build leaf rows for all non-parent categories. Parent rows do NOT
-  // appear as leaves - they only appear as synthetic rollup rows.
+  // Own-spend rows exist for every category (a parent can carry its own
+  // transactions too); only non-parents are shown as leaves. Parents only
+  // appear as synthetic rollup rows.
+  const ownById = new Map(categories.map((c) => [c.id, leafRow(c)]));
   const leafRows: CategoryWithData[] = categories
     .filter((c) => !parentIdSet.has(c.id))
-    .map(leafRow);
-  const leafById = new Map(leafRows.map((r) => [r.categoryId, r]));
+    .map((c) => ownById.get(c.id)!);
 
-  // Build a parent rollup row per parent category. Aggregates over its
-  // direct children's leaf rows.
+  // Recursive descendants: the tree can be arbitrarily deep, so a
+  // top-level rollup must reach grandchildren too.
+  const descendantsOf = (id: number): (typeof categories)[number][] => {
+    const direct = childrenByParent.get(id) ?? [];
+    return direct.flatMap((child) => [child, ...descendantsOf(child.id)]);
+  };
+
+  // Build a rollup row per TOP-LEVEL parent, aggregating its own spend
+  // plus every descendant's. Mid-level parents don't get their own card;
+  // they live inside their ancestor's group.
   const parentRows: CategoryWithData[] = [];
   for (const parent of categories) {
-    if (!parentIdSet.has(parent.id)) continue;
-    const kids = childrenByParent.get(parent.id) ?? [];
+    if (!parentIdSet.has(parent.id) || parent.parentId != null) continue;
+    const kids = [parent, ...descendantsOf(parent.id)];
     const kidRows = kids
-      .map((k) => leafById.get(k.id))
+      .map((k) => ownById.get(k.id))
       .filter((r): r is CategoryWithData => !!r);
 
     const spent = kidRows.reduce((s, r) => s + r.spent, 0);
@@ -248,7 +257,7 @@ export async function GET(request: Request) {
       parentName: null,
       isParent: true,
       budgetSource,
-      childCount: kids.length,
+      childCount: (childrenByParent.get(parent.id) ?? []).length,
       categoryName: parent.name,
       categoryColor: parent.color,
       categoryIcon: parent.icon,

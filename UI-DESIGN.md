@@ -241,6 +241,18 @@ removable active-filter chips under the header, click-outside and
 kept-after-action selection, emoji icons on categories (defaults seeded,
 editable per category), and custom colors saved into the palette.
 
+Status 2026-09-05, fourth wave: not-counted rows (transfers and
+excluded) are hidden from the list by default because card-billing
+transfers just duplicate itemized card spending; a tri-state in Filters
+and the footer toggle reveal them. Row-body clicks always toggle
+selection; click-outside deselects properly. Date range got From/To
+labels with a last-30-days default. Per-transaction notes (never
+touched by sync), per-card nicknames with last-4 display (account
+numbers hidden for banks), Uncategorized selectable in every picker,
+the whole color palette editable per swatch, and category creation
+with a parent at any depth (children inherit the parent's color
+family; summary rollups recurse).
+
 ## Open questions
 
 - Should interest on a loan repayment be split automatically when the

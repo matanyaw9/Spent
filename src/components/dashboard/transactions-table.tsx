@@ -38,18 +38,19 @@ import {
   Tags,
   EyeOff,
   Eye,
+  Trash2,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useQuery } from "@tanstack/react-query";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import {
   updateTransactionCategory,
   setTransactionKind,
   approveTransactionCategory,
-  getCategories,
+  deleteTransaction,
   setTransactionExcluded,
   type TransactionsSummary,
 } from "@/lib/api";
+import { CategoryPicker } from "@/components/transactions/category-picker";
 import { toast } from "sonner";
 import { translateCategoryName, translateProviderName } from "@/lib/i18n-data";
 import {
@@ -166,13 +167,10 @@ export function TransactionsTable({
     }
   };
 
-  const handleRowCheckbox = (
-    index: number,
-    event: React.MouseEvent<HTMLButtonElement>
-  ) => {
+  const applySelectionClick = (index: number, shiftKey: boolean) => {
     const txn = transactions[index];
     const nextSelected = !isRowSelected(txn.id);
-    if (event.shiftKey && lastClickedIndexRef.current != null) {
+    if (shiftKey && lastClickedIndexRef.current != null) {
       const start = Math.min(lastClickedIndexRef.current, index);
       const end = Math.max(lastClickedIndexRef.current, index);
       onSelectRows(
@@ -183,6 +181,34 @@ export function TransactionsTable({
       onSelectRows([txn.id], nextSelected);
     }
     lastClickedIndexRef.current = index;
+  };
+
+  const handleRowCheckbox = (
+    index: number,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    applySelectionClick(index, event.shiftKey);
+  };
+
+  const hasSelectionActive = allMatching || selectedIds.size > 0;
+
+  // Outlook-style: once a selection exists (or with Ctrl/Shift held), a
+  // click anywhere on the row toggles it; clicks on the row's own controls
+  // keep their meaning.
+  const handleRowBackgroundClick = (
+    index: number,
+    event: React.MouseEvent<HTMLTableRowElement>
+  ) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, [role='menu']")) return;
+    if (
+      event.shiftKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      hasSelectionActive
+    ) {
+      applySelectionClick(index, event.shiftKey);
+    }
   };
 
   const otherKinds: Record<Kind, Array<{ value: Kind; label: string }>> = {
@@ -246,6 +272,19 @@ export function TransactionsTable({
     queryClient.invalidateQueries({ queryKey: ["excluded-merchants"] });
   };
 
+  const handleDelete = async (txn: TransactionWithCategory) => {
+    setUpdatingId(txn.id);
+    try {
+      await deleteTransaction(txn.id);
+      invalidateAfterExclude();
+      toast.success(t("deleteEntryToast"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const handleExcludeToggle = async (
     txn: TransactionWithCategory,
     alwaysForMerchant = false,
@@ -269,21 +308,6 @@ export function TransactionsTable({
     } finally {
       setUpdatingId(null);
     }
-  };
-
-  const incomeCategoriesQuery = useQuery({
-    queryKey: ["categories", "income"],
-    queryFn: () => getCategories("income"),
-  });
-  const expenseCategoriesQuery = useQuery({
-    queryKey: ["categories", "expense"],
-    queryFn: () => getCategories("expense"),
-  });
-
-  const categoriesForKind = (rowKind: Kind): Category[] => {
-    if (rowKind === "income") return incomeCategoriesQuery.data ?? [];
-    if (rowKind === "expense") return expenseCategoriesQuery.data ?? [];
-    return [];
   };
 
   const accountOptions = integrations
@@ -607,17 +631,24 @@ export function TransactionsTable({
                   const directionColor = isIncome
                     ? "var(--status-on-track)"
                     : "var(--status-over)";
-                  const categoryKind: Kind = isIncome ? "income" : "expense";
+                  const categoryKind: "expense" | "income" =
+                    txn.kind === "income" || txn.kind === "expense"
+                      ? txn.kind
+                      : isIncome
+                        ? "income"
+                        : "expense";
                   const categoryName = txn.categoryName
                     ? translateCategoryName(txn.categoryName, tCat)
                     : t("rowUncategorized");
                   return (
                     <TableRow
                       key={txn.id}
+                      onClick={(e) => handleRowBackgroundClick(index, e)}
                       className={cn(
                         "transition-colors duration-200 hover:bg-muted/50",
                         notCountedRow && "opacity-50",
                         selected && "bg-accent/40 hover:bg-accent/50",
+                        hasSelectionActive && "select-none",
                       )}
                     >
                       <TableCell>
@@ -711,44 +742,30 @@ export function TransactionsTable({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1.5">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              className="inline-flex"
-                              disabled={updatingId === txn.id}
+                          <CategoryPicker
+                            kinds={[categoryKind]}
+                            disabled={updatingId === txn.id}
+                            onSelect={(cat) =>
+                              handleCategoryChange(txn.id, cat.id)
+                            }
+                            triggerClassName="inline-flex"
+                          >
+                            <Badge
+                              variant="outline"
+                              className="cursor-pointer transition-colors hover:bg-accent"
+                              style={
+                                txn.categoryColor
+                                  ? {
+                                      borderColor: txn.categoryColor + "40",
+                                      backgroundColor: txn.categoryColor + "15",
+                                      color: txn.categoryColor,
+                                    }
+                                  : undefined
+                              }
                             >
-                              <Badge
-                                variant="outline"
-                                className="cursor-pointer transition-colors hover:bg-accent"
-                                style={
-                                  txn.categoryColor
-                                    ? {
-                                        borderColor: txn.categoryColor + "40",
-                                        backgroundColor: txn.categoryColor + "15",
-                                        color: txn.categoryColor,
-                                      }
-                                    : undefined
-                                }
-                              >
-                                {categoryName}
-                              </Badge>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start">
-                              {categoriesForKind(categoryKind).map((cat) => (
-                                <DropdownMenuItem
-                                  key={cat.id}
-                                  onClick={() =>
-                                    handleCategoryChange(txn.id, cat.id)
-                                  }
-                                >
-                                  <div
-                                    className="me-2 h-2 w-2 rounded-full"
-                                    style={{ backgroundColor: cat.color }}
-                                  />
-                                  {translateCategoryName(cat.name, tCat)}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                              {categoryName}
+                            </Badge>
+                          </CategoryPicker>
                           {txn.needsReview && (
                             <Button
                               size="sm"
@@ -773,6 +790,7 @@ export function TransactionsTable({
                         <TransactionSourceCell
                           provider={txn.provider}
                           accountLabel={txn.accountLabel}
+                          accountNumber={txn.accountNumber}
                         />
                       </TableCell>
                       <TableCell
@@ -806,6 +824,15 @@ export function TransactionsTable({
                                 {opt.label}
                               </DropdownMenuItem>
                             ))}
+                            {txn.provider === "manual" && (
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(txn)}
+                                className="text-destructive"
+                              >
+                                <Trash2 className="me-2 h-3.5 w-3.5" />
+                                {t("deleteEntry")}
+                              </DropdownMenuItem>
+                            )}
                             {txn.isExcluded ? (
                               <DropdownMenuItem
                                 onClick={() => handleExcludeToggle(txn, false)}

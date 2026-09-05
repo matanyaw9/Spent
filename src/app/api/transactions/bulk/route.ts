@@ -60,6 +60,19 @@ function parseFilter(raw: unknown): TransactionListFilter | null {
         ? (kind as TransactionKindFilter)
         : undefined,
     notCounted: f.notCounted === true ? true : undefined,
+    excluded:
+      f.excluded === "hide" || f.excluded === "only" ? f.excluded : undefined,
+    amountMin:
+      typeof f.amountMin === "number" && Number.isFinite(f.amountMin)
+        ? f.amountMin
+        : undefined,
+    amountMax:
+      typeof f.amountMax === "number" && Number.isFinite(f.amountMax)
+        ? f.amountMax
+        : undefined,
+    accountNumbers: Array.isArray(f.accountNumbers)
+      ? f.accountNumbers.filter((a): a is string => typeof a === "string")
+      : undefined,
   };
 }
 

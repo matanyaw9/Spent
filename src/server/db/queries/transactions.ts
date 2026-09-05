@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { getDb } from "../index";
 import { computeDedupHash } from "../../lib/dedup";
 import {
@@ -304,6 +305,13 @@ export interface TransactionListFilter {
   credentialIds?: number[];
   /** Only rows that don't count toward totals: excluded or transfers. */
   notCounted?: boolean;
+  /** Excluded visibility: hide them, show only them, or (unset) both. */
+  excluded?: "hide" | "only";
+  /** Magnitude bounds, applied to ABS(charged_amount). */
+  amountMin?: number;
+  amountMax?: number;
+  /** Filter to specific cards/accounts (transactions.account_number). */
+  accountNumbers?: string[];
 }
 
 interface QueryParams extends TransactionListFilter {
@@ -380,6 +388,24 @@ function buildListConditions(
   }
   if (params.notCounted) {
     conditions.push("(t.is_excluded = 1 OR t.kind = 'transfer')");
+  }
+  if (params.excluded === "hide") {
+    conditions.push("t.is_excluded = 0");
+  } else if (params.excluded === "only") {
+    conditions.push("t.is_excluded = 1");
+  }
+  if (params.amountMin != null) {
+    conditions.push("ABS(t.charged_amount) >= ?");
+    values.push(params.amountMin);
+  }
+  if (params.amountMax != null) {
+    conditions.push("ABS(t.charged_amount) <= ?");
+    values.push(params.amountMax);
+  }
+  if (params.accountNumbers && params.accountNumbers.length > 0) {
+    const placeholders = params.accountNumbers.map(() => "?").join(",");
+    conditions.push(`t.account_number IN (${placeholders})`);
+    for (const acc of params.accountNumbers) values.push(acc);
   }
   if (params.provider) {
     conditions.push("t.provider = ?");
@@ -806,6 +832,109 @@ export function setTransactionKind(
        WHERE workspace_id = ? AND id = ?`
     )
     .run(kind, workspaceId, id);
+}
+
+export interface TransactionAccount {
+  provider: string;
+  accountNumber: string;
+  count: number;
+}
+
+/** Distinct cards/accounts that appear on this workspace's transactions. */
+export function listTransactionAccounts(
+  workspaceId: number
+): TransactionAccount[] {
+  return getDb()
+    .prepare(
+      `SELECT provider, account_number as accountNumber, COUNT(*) as count
+       FROM transactions
+       WHERE workspace_id = ?
+       GROUP BY provider, account_number
+       ORDER BY provider, account_number`
+    )
+    .all(workspaceId) as TransactionAccount[];
+}
+
+/**
+ * Manual entries (cash and the like) have no scraper run behind them, but
+ * sync_run_id is NOT NULL, so each workspace lazily gets one synthetic
+ * completed run that all manual rows hang off.
+ */
+function getOrCreateManualSyncRun(workspaceId: number): number {
+  const db = getDb();
+  const existing = db
+    .prepare(
+      `SELECT id FROM sync_runs
+       WHERE workspace_id = ? AND provider = 'manual'
+       LIMIT 1`
+    )
+    .get(workspaceId) as { id: number } | undefined;
+  if (existing) return existing.id;
+  const result = db
+    .prepare(
+      `INSERT INTO sync_runs (workspace_id, provider, started_at, completed_at, status, scrape_from_date)
+       VALUES (?, 'manual', datetime('now'), datetime('now'), 'completed', date('now'))`
+    )
+    .run(workspaceId);
+  return Number(result.lastInsertRowid);
+}
+
+export interface ManualTransactionInput {
+  date: string;
+  /** Magnitude; the kind decides the sign. */
+  amount: number;
+  kind: "expense" | "income" | "transfer";
+  description: string;
+  categoryId?: number | null;
+  memo?: string | null;
+}
+
+export function createManualTransaction(
+  workspaceId: number,
+  input: ManualTransactionInput
+): number {
+  const syncRunId = getOrCreateManualSyncRun(workspaceId);
+  const magnitude = Math.abs(input.amount);
+  const chargedAmount = input.kind === "income" ? magnitude : -magnitude;
+  const result = getDb()
+    .prepare(
+      `INSERT INTO transactions (
+         workspace_id, account_number, date, processed_date,
+         original_amount, original_currency, charged_amount, description,
+         memo, type, status, provider, sync_run_id, dedup_hash,
+         dedup_sequence, kind, kind_source, category_id, category_source,
+         needs_review
+       ) VALUES (?, 'cash', ?, ?, ?, 'ILS', ?, ?, ?, 'normal', 'completed',
+                 'manual', ?, ?, 0, ?, 'user', ?, ?, 0)`
+    )
+    .run(
+      workspaceId,
+      input.date,
+      input.date,
+      chargedAmount,
+      chargedAmount,
+      input.description,
+      input.memo ?? null,
+      syncRunId,
+      `manual-${randomUUID()}`,
+      input.kind,
+      input.categoryId ?? null,
+      input.categoryId != null ? "user" : null
+    );
+  return Number(result.lastInsertRowid);
+}
+
+export function deleteManualTransaction(
+  workspaceId: number,
+  id: number
+): boolean {
+  const result = getDb()
+    .prepare(
+      `DELETE FROM transactions
+       WHERE workspace_id = ? AND id = ? AND provider = 'manual'`
+    )
+    .run(workspaceId, id);
+  return result.changes > 0;
 }
 
 /** Chunk ids so IN (...) never exceeds SQLite's bound-variable limit. */

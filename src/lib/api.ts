@@ -211,15 +211,16 @@ export function getTransactions(params: {
   provider?: string;
   credentialIds?: number[];
   notCounted?: boolean;
+  excluded?: "hide" | "only";
+  amountMin?: number;
+  amountMax?: number;
+  accountNumbers?: string[];
 }) {
   const searchParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined) return;
-    if (
-      (key === "categoryIds" || key === "credentialIds") &&
-      Array.isArray(value)
-    ) {
-      for (const id of value) searchParams.append(key, String(id));
+    if (Array.isArray(value)) {
+      for (const item of value) searchParams.append(key, String(item));
       return;
     }
     searchParams.set(key, String(value));
@@ -237,6 +238,51 @@ export interface BulkTransactionFilter {
   credentialIds?: number[];
   kind?: TransactionKindFilter;
   notCounted?: boolean;
+  excluded?: "hide" | "only";
+  amountMin?: number;
+  amountMax?: number;
+  accountNumbers?: string[];
+}
+
+export interface TransactionAccount {
+  provider: string;
+  accountNumber: string;
+  count: number;
+}
+
+export function listTransactionAccounts() {
+  return fetchJSON<TransactionAccount[]>("/api/transactions/accounts");
+}
+
+export interface ManualTransactionInput {
+  date: string;
+  amount: number;
+  kind: TransactionKind;
+  description: string;
+  categoryId?: number | null;
+  memo?: string | null;
+}
+
+export function createManualTransaction(input: ManualTransactionInput) {
+  return fetchJSON<{ id: number }>("/api/transactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteTransaction(id: number) {
+  return fetchJSON<{ success: boolean }>(`/api/transactions/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function updateCategoryColor(id: number, color: string) {
+  return fetchJSON<{ success: boolean }>(`/api/categories/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ color }),
+  });
 }
 
 export type BulkTransactionAction =

@@ -15,12 +15,19 @@ import { AINotConnectedBanner } from "@/components/ai-not-connected-banner";
 import { KpiCards } from "./kpi-cards";
 import { WidgetsRow } from "./widgets-row";
 import { BulkActionBar } from "./bulk-action-bar";
+import { AddTransactionDialog } from "./add-transaction-dialog";
+import {
+  TransactionFiltersPopover,
+  EMPTY_ADVANCED_FILTERS,
+  type AdvancedFilters,
+} from "./transaction-filters-popover";
 import {
   bulkUpdateTransactions,
   getCategories,
   getTransactions,
   getTransactionsSummary,
   listIntegrations,
+  listTransactionAccounts,
 } from "@/lib/api";
 import type { BulkTransactionAction, TransactionKindFilter } from "@/lib/api";
 import { expandCategoryFilterIds } from "@/lib/transaction-filters";
@@ -48,6 +55,9 @@ export function TransactionsPage() {
   const [sortField, setSortField] = useState<TransactionSortField>("date");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [notCountedOnly, setNotCountedOnly] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilters>(
+    EMPTY_ADVANCED_FILTERS
+  );
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
   const [bulkPending, setBulkPending] = useState(false);
@@ -59,7 +69,23 @@ export function TransactionsPage() {
     { value: "expense", label: t("filterExpenses") },
   ];
 
-  const { from, to } = getMonthRange(selectedDate);
+  const monthRange = getMonthRange(selectedDate);
+  // Custom dates from the filters popover override the month selector.
+  const from = advancedFilters.dateFrom || monthRange.from;
+  const to = advancedFilters.dateTo || monthRange.to;
+
+  const parseAmount = (raw: string): number | undefined => {
+    if (raw === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const amountMin = parseAmount(advancedFilters.amountMin);
+  const amountMax = parseAmount(advancedFilters.amountMax);
+  const excludedFilter = advancedFilters.excluded ?? undefined;
+  const accountNumbersFilter =
+    advancedFilters.accountNumbers.length > 0
+      ? advancedFilters.accountNumbers
+      : undefined;
 
   // A selection only makes sense against the filter it was made under, so
   // drop it whenever the filter changes (guarded update during render).
@@ -71,6 +97,7 @@ export function TransactionsPage() {
     accountFilter,
     kind,
     notCountedOnly,
+    advancedFilters,
   ]);
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
@@ -86,6 +113,10 @@ export function TransactionsPage() {
   const integrationsQuery = useQuery({
     queryKey: ["integrations"],
     queryFn: () => listIntegrations(),
+  });
+  const accountsQuery = useQuery({
+    queryKey: ["transaction-accounts"],
+    queryFn: () => listTransactionAccounts(),
   });
 
   const expandedCategoryIds = expandCategoryFilterIds(
@@ -106,6 +137,7 @@ export function TransactionsPage() {
       sortField,
       sortOrder,
       notCountedOnly,
+      advancedFilters,
     ],
     queryFn: () =>
       getTransactions({
@@ -121,6 +153,10 @@ export function TransactionsPage() {
         sort: sortField,
         order: sortOrder,
         notCounted: notCountedOnly || undefined,
+        excluded: excludedFilter,
+        amountMin,
+        amountMax,
+        accountNumbers: accountNumbersFilter,
       }),
     placeholderData: keepPreviousData,
   });
@@ -192,6 +228,10 @@ export function TransactionsPage() {
                 accountFilter.length > 0 ? accountFilter : undefined,
               kind,
               notCounted: notCountedOnly || undefined,
+              excluded: excludedFilter,
+              amountMin,
+              amountMax,
+              accountNumbers: accountNumbersFilter,
             },
           }
         : { ids: [...selectedIds] };
@@ -252,6 +292,7 @@ export function TransactionsPage() {
           loading={summaryInitialLoading}
         />
 
+        <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-border bg-card p-1 w-fit">
           {filterOptions.map((opt) => {
             const active = kind === opt.value;
@@ -274,6 +315,18 @@ export function TransactionsPage() {
               </button>
             );
           })}
+        </div>
+        <div className="flex items-center gap-2">
+          <TransactionFiltersPopover
+            value={advancedFilters}
+            onChange={(next) => {
+              setAdvancedFilters(next);
+              setPage(0);
+            }}
+            accounts={accountsQuery.data ?? []}
+          />
+          <AddTransactionDialog />
+        </div>
         </div>
 
         <TransactionsTable

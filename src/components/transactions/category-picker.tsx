@@ -1,0 +1,207 @@
+"use client";
+
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import { Plus, Search } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { createCategory, getCategories } from "@/lib/api";
+import { translateCategoryName } from "@/lib/i18n-data";
+import { cn } from "@/lib/utils";
+import type { Category, CategoryKind } from "@/lib/types";
+
+interface CategoryPickerProps {
+  /** Which category kinds to offer. One kind for a row, both for bulk. */
+  kinds: CategoryKind[];
+  onSelect: (category: Category) => void;
+  disabled?: boolean;
+  triggerClassName?: string;
+  align?: "start" | "center" | "end";
+  side?: "top" | "bottom";
+  children: React.ReactNode;
+}
+
+/**
+ * Searchable category dropdown with inline creation, so assigning a label
+ * never requires a detour through settings.
+ */
+export function CategoryPicker({
+  kinds,
+  onSelect,
+  disabled,
+  triggerClassName,
+  align = "start",
+  side,
+  children,
+}: CategoryPickerProps) {
+  const t = useTranslations("transactions");
+  const tCat = useTranslations("categoriesSeeded");
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const expenseQuery = useQuery({
+    queryKey: ["categories", "expense"],
+    queryFn: () => getCategories("expense"),
+    enabled: open && kinds.includes("expense"),
+  });
+  const incomeQuery = useQuery({
+    queryKey: ["categories", "income"],
+    queryFn: () => getCategories("income"),
+    enabled: open && kinds.includes("income"),
+  });
+
+  const listFor = (kind: CategoryKind): Category[] =>
+    (kind === "expense" ? expenseQuery.data : incomeQuery.data) ?? [];
+
+  const trimmed = query.trim();
+  const matches = (cat: Category): boolean => {
+    if (!trimmed) return true;
+    const q = trimmed.toLowerCase();
+    return (
+      cat.name.toLowerCase().includes(q) ||
+      translateCategoryName(cat.name, tCat).toLowerCase().includes(q)
+    );
+  };
+
+  const groups = kinds.map((kind) => ({
+    kind,
+    label: kind === "expense" ? t("filterExpenses") : t("filterIncome"),
+    categories: listFor(kind).filter(matches),
+  }));
+
+  const allLoaded = kinds.every((kind) =>
+    kind === "expense" ? expenseQuery.data != null : incomeQuery.data != null
+  );
+  const exactExists = kinds.some((kind) =>
+    listFor(kind).some(
+      (cat) => cat.name.toLowerCase() === trimmed.toLowerCase()
+    )
+  );
+  const showCreate = trimmed.length > 0 && allLoaded && !exactExists;
+  const visibleMatches = groups.flatMap((g) => g.categories);
+
+  const finish = (category: Category) => {
+    setOpen(false);
+    setQuery("");
+    onSelect(category);
+  };
+
+  const handleCreate = async (kind: CategoryKind) => {
+    if (creating || !trimmed) return;
+    setCreating(true);
+    try {
+      const created = await createCategory({ name: trimmed, kind });
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      finish(created);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleEnter = () => {
+    if (visibleMatches.length === 1) {
+      finish(visibleMatches[0]);
+    } else if (visibleMatches.length === 0 && showCreate) {
+      handleCreate(kinds[0]);
+    }
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setQuery("");
+      }}
+    >
+      <PopoverTrigger disabled={disabled} className={triggerClassName}>
+        {children}
+      </PopoverTrigger>
+      <PopoverContent align={align} side={side} className="w-64 p-0">
+        <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
+          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleEnter();
+              }
+            }}
+            placeholder={t("categorySearchPlaceholder")}
+            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          />
+        </div>
+        <div className="max-h-64 overflow-y-auto p-1">
+          {groups.map((group) => (
+            <div key={group.kind}>
+              {kinds.length > 1 && group.categories.length > 0 && (
+                <div className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  {group.label}
+                </div>
+              )}
+              {group.categories.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => finish(cat)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+                >
+                  <div
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: cat.color }}
+                  />
+                  <span className="truncate">
+                    {translateCategoryName(cat.name, tCat)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))}
+          {visibleMatches.length === 0 && !showCreate && (
+            <div className="px-2 py-3 text-center text-xs text-muted-foreground">
+              {t("categorySearchEmpty")}
+            </div>
+          )}
+          {showCreate &&
+            kinds.map((kind) => (
+              <button
+                key={`create-${kind}`}
+                type="button"
+                disabled={creating}
+                onClick={() => handleCreate(kind)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm font-medium transition-colors hover:bg-accent",
+                  creating && "opacity-50"
+                )}
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">
+                  {kinds.length > 1
+                    ? t("categoryCreateInKind", {
+                        name: trimmed,
+                        kind:
+                          kind === "expense"
+                            ? t("filterExpenses")
+                            : t("filterIncome"),
+                      })
+                    : t("categoryCreate", { name: trimmed })}
+                </span>
+              </button>
+            ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}

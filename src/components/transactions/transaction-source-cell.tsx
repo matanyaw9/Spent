@@ -8,6 +8,8 @@ import { BANK_PROVIDERS } from "@/lib/types";
 interface TransactionSourceCellProps {
   provider: string;
   accountLabel: string | null;
+  /** transactions.account_number: the card or bank account the row hit. */
+  accountNumber?: string | null;
 }
 
 export function getAccountDisplayLabel(
@@ -27,6 +29,7 @@ export function getAccountDisplayLabel(
 export function TransactionSourceCell({
   provider,
   accountLabel,
+  accountNumber,
 }: TransactionSourceCellProps) {
   const tBanks = useTranslations("banks");
   const info = BANK_PROVIDERS.find((b) => b.id === provider);
@@ -37,7 +40,10 @@ export function TransactionSourceCell({
   );
 
   const { primary, secondary } = getAccountDisplayLabel(providerName, accountLabel);
-  const tooltip = secondary ? `${primary} · ${secondary}` : primary;
+  const detail = [secondary, accountNumber?.trim() || null]
+    .filter((part): part is string => part != null)
+    .join(" · ");
+  const tooltip = detail ? `${primary} · ${detail}` : primary;
 
   return (
     <div className="flex min-w-0 items-center gap-2" title={tooltip}>
@@ -54,8 +60,8 @@ export function TransactionSourceCell({
       )}
       <div className="min-w-0">
         <div className="truncate text-sm leading-tight">{primary}</div>
-        {secondary ? (
-          <div className="truncate text-xs text-muted-foreground">{secondary}</div>
+        {detail ? (
+          <div className="truncate text-xs text-muted-foreground">{detail}</div>
         ) : null}
       </div>
     </div>

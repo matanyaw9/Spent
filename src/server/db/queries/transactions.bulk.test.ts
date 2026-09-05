@@ -24,6 +24,7 @@ interface SeedTxn {
   excluded?: boolean;
   description?: string;
   date?: string;
+  accountNumber?: string;
 }
 
 function insertTxn(t: SeedTxn): number {
@@ -36,11 +37,12 @@ function insertTxn(t: SeedTxn): number {
          original_amount, original_currency, charged_amount, description,
          type, status, provider, sync_run_id, dedup_hash, dedup_sequence,
          kind, is_excluded
-       ) VALUES (?, '1234', ?, ?, ?, 'ILS', ?, ?, 'normal', 'completed',
+       ) VALUES (?, ?, ?, ?, ?, 'ILS', ?, ?, 'normal', 'completed',
                  'isracard', 1, ?, 0, ?, ?)`
     )
     .run(
       WS,
+      t.accountNumber ?? "1234",
       date,
       date,
       t.amount,
@@ -225,6 +227,143 @@ describe("resolveFilteredTransactionIds", () => {
     expect(ids).toContain(excluded);
     expect(ids).toContain(transfer);
     expect(ids).not.toContain(counted);
+  });
+});
+
+describe("advanced list filters", () => {
+  const range = { from: "2031-03-01", to: "2031-03-31" };
+
+  it("excluded tri-state hides or isolates excluded rows", () => {
+    const kept = insertTxn({ amount: -10, kind: "expense", date: "2031-03-05" });
+    const excluded = insertTxn({
+      amount: -20,
+      kind: "expense",
+      excluded: true,
+      date: "2031-03-06",
+    });
+
+    const hidden = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      excluded: "hide",
+    });
+    expect(hidden).toContain(kept);
+    expect(hidden).not.toContain(excluded);
+
+    const only = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      excluded: "only",
+    });
+    expect(only).toEqual([excluded]);
+  });
+
+  it("amount bounds apply to the magnitude, not the sign", () => {
+    const small = insertTxn({ amount: -50, kind: "expense", date: "2031-03-10" });
+    const large = insertTxn({ amount: -900, kind: "expense", date: "2031-03-11" });
+    const bigIncome = insertTxn({
+      amount: 800,
+      kind: "income",
+      date: "2031-03-12",
+    });
+
+    const ids = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      amountMin: 100,
+      amountMax: 1000,
+    });
+    expect(ids).toContain(large);
+    expect(ids).toContain(bigIncome);
+    expect(ids).not.toContain(small);
+  });
+
+  it("filters by card/account number", () => {
+    const cardA = insertTxn({
+      amount: -30,
+      kind: "expense",
+      date: "2031-03-15",
+      accountNumber: "9999",
+    });
+    const cardB = insertTxn({
+      amount: -40,
+      kind: "expense",
+      date: "2031-03-16",
+      accountNumber: "8888",
+    });
+
+    const ids = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      accountNumbers: ["9999"],
+    });
+    expect(ids).toContain(cardA);
+    expect(ids).not.toContain(cardB);
+
+    const accounts = queries.listTransactionAccounts(WS);
+    expect(accounts.map((a) => a.accountNumber)).toContain("9999");
+  });
+});
+
+describe("manual transactions", () => {
+  it("creates a signed row with user-owned metadata", () => {
+    const expenseId = queries.createManualTransaction(WS, {
+      date: "2031-06-01",
+      amount: 55.5,
+      kind: "expense",
+      description: "falafel, cash",
+      categoryId: expenseCategoryId,
+      memo: "lunch",
+    });
+    const incomeId = queries.createManualTransaction(WS, {
+      date: "2031-06-02",
+      amount: 200,
+      kind: "income",
+      description: "sold a chair",
+    });
+
+    const expense = db
+      .prepare(
+        `SELECT provider, account_number, charged_amount, kind, kind_source,
+                category_id, category_source, sync_run_id, memo
+         FROM transactions WHERE id = ?`
+      )
+      .get(expenseId) as Record<string, unknown>;
+    const income = db
+      .prepare(
+        `SELECT charged_amount, category_id, category_source, sync_run_id
+         FROM transactions WHERE id = ?`
+      )
+      .get(incomeId) as Record<string, unknown>;
+
+    expect(expense).toMatchObject({
+      provider: "manual",
+      account_number: "cash",
+      charged_amount: -55.5,
+      kind: "expense",
+      kind_source: "user",
+      category_id: expenseCategoryId,
+      category_source: "user",
+      memo: "lunch",
+    });
+    expect(income.charged_amount).toBe(200);
+    expect(income.category_id).toBeNull();
+    expect(income.category_source).toBeNull();
+    // Both hang off the same synthetic per-workspace sync run.
+    expect(income.sync_run_id).toBe(expense.sync_run_id);
+  });
+
+  it("deletes manual rows only", () => {
+    const manualId = queries.createManualTransaction(WS, {
+      date: "2031-06-03",
+      amount: 10,
+      kind: "expense",
+      description: "bus fare",
+    });
+    const syncedId = insertTxn({ amount: -10, kind: "expense" });
+
+    expect(queries.deleteManualTransaction(WS, manualId)).toBe(true);
+    expect(queries.deleteManualTransaction(WS, syncedId)).toBe(false);
+    const gone = db
+      .prepare(`SELECT COUNT(*) as count FROM transactions WHERE id = ?`)
+      .get(manualId) as { count: number };
+    expect(gone.count).toBe(0);
   });
 });
 

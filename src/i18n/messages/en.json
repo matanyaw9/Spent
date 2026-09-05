@@ -216,7 +216,38 @@
     "notCountedShowAll": "Show all activity",
     "kpiIncomeHint": "Rows marked as income. Excluded rows and transfers are not counted.",
     "kpiExpensesHint": "Rows marked as expenses. Excluded rows and transfers are not counted.",
-    "kpiNetHint": "Income minus expenses. Excluded rows and transfers are not counted."
+    "kpiNetHint": "Income minus expenses. Excluded rows and transfers are not counted.",
+    "filtersButton": "Filters",
+    "filterExcludedLabel": "Excluded transactions",
+    "filterExcludedAll": "Show all",
+    "filterExcludedHide": "Hide excluded",
+    "filterExcludedOnly": "Only excluded",
+    "filterAmountLabel": "Amount range",
+    "filterAmountMin": "Min",
+    "filterAmountMax": "Max",
+    "filterDatesLabel": "Date range",
+    "filterDatesHint": "Overrides the month selector while set.",
+    "filterCardLabel": "Card / account",
+    "filterClearAll": "Clear filters",
+    "categorySearchPlaceholder": "Search or create...",
+    "categorySearchEmpty": "No matching categories.",
+    "categoryCreate": "Create \"{name}\"",
+    "categoryCreateInKind": "Create \"{name}\" in {kind}",
+    "addTransaction": "Add",
+    "addTransactionTitle": "Add a transaction",
+    "addTransactionHint": "Record something the banks don't see, like cash.",
+    "addTransactionDate": "Date",
+    "addTransactionAmount": "Amount (ILS)",
+    "addTransactionDescription": "Description",
+    "addTransactionDescriptionPlaceholder": "e.g. Falafel, cash",
+    "addTransactionPickCategory": "Pick a category",
+    "addTransactionMemo": "Note (optional)",
+    "addTransactionMemoPlaceholder": "Anything worth remembering",
+    "addTransactionCancel": "Cancel",
+    "addTransactionSave": "Add transaction",
+    "addTransactionToast": "Transaction added",
+    "deleteEntry": "Delete entry",
+    "deleteEntryToast": "Entry deleted"
   },
   "dashboard": {
     "syncing": "Syncing…",
@@ -659,6 +690,9 @@
     "Fees & Taxes": "Fees & Taxes"
   },
   "banks": {
+    "manual": {
+      "name": "Manual"
+    },
     "isracard": {
       "name": "Isracard",
       "blurb": "Israeli Mastercard / Visa"

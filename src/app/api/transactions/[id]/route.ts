@@ -4,7 +4,7 @@ import {
   setTransactionKind,
   setTransactionNeedsReview,
   getTransactionContext,
-  applyCategoryToMerchant,
+  deleteManualTransaction,
 } from "@/server/db/queries/transactions";
 import { recordMerchantCategory } from "@/server/lib/merchant-memory";
 import { recordCorrection } from "@/server/db/queries/category-corrections";
@@ -32,28 +32,20 @@ export async function PUT(
   updateTransactionCategory(workspaceId, numericId, body.categoryId, "user");
   setTransactionNeedsReview(workspaceId, numericId, false);
 
-  let appliedToMerchant = 0;
   if (before && (before.kind === "expense" || before.kind === "income")) {
     const category = getAllCategories(workspaceId).find(
       (c) => c.id === body.categoryId
     );
     if (category && (category.kind === "expense" || category.kind === "income")) {
+      // Remember the choice for FUTURE syncs only. Recategorizing one
+      // transaction must never silently rewrite the merchant's existing
+      // rows; a rule is the explicit way to do that at scale.
       recordMerchantCategory(
         workspaceId,
         before.description,
         body.categoryId,
         category.kind,
         "user"
-      );
-
-      // Merchant memory only affects future syncs; also update the already
-      // imported transactions of this merchant that the user hasn't
-      // categorized themselves.
-      appliedToMerchant = applyCategoryToMerchant(
-        workspaceId,
-        before.description,
-        body.categoryId,
-        category.kind
       );
 
       // If the user just overrode an AI-set category, log it as a correction
@@ -74,7 +66,30 @@ export async function PUT(
     }
   }
 
-  return NextResponse.json({ success: true, appliedToMerchant });
+  return NextResponse.json({ success: true });
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const workspaceId = getWorkspaceIdFromRequest(request);
+  const { id } = await params;
+  const numericId = Number(id);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
+
+  // Only manually entered rows can be deleted; bank-synced rows would just
+  // come back on the next sync, so those are excluded instead.
+  const ok = deleteManualTransaction(workspaceId, numericId);
+  if (!ok) {
+    return NextResponse.json(
+      { error: "only manual transactions can be deleted" },
+      { status: 400 }
+    );
+  }
+  return NextResponse.json({ success: true });
 }
 
 export async function PATCH(

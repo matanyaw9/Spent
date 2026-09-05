@@ -78,9 +78,12 @@ Linear). Actions:
 
 ### Rules engine
 
-Today two hardcoded rule types exist in disguise: `excluded_merchants`
-("always exclude this merchant") and apply-categorization-to-history.
-Generalize into one `rules` table and one settings UI:
+Today one hardcoded rule type exists in disguise: `excluded_merchants`
+("always exclude this merchant"). Apply-categorization-to-history was the
+second, but it was removed on 2026-09-05: silently rewriting a merchant's
+other rows on a single-row edit surprised more than it helped. Retroactive
+apply comes back as an explicit, previewed rules action. Generalize into
+one `rules` table and one settings UI:
 
 ```
 rules (
@@ -222,6 +225,14 @@ reason chips on excluded and transfer rows, and goal 5's loading
 feedback on connection tests. Arrow-key roving focus from the Selection
 spec is deferred to a polish pass (checkboxes are fully keyboard
 reachable via Tab/Space).
+
+Status 2026-09-05, second wave: searchable category picker with inline
+create (Outlook-style labels, no settings detour), row-click / Ctrl-click
+/ Shift-click selection, an advanced filters popover (excluded tri-state,
+amount range, custom date range, per-card filter), the card/account shown
+on every row, manual cash entries (add and delete), a per-category color
+picker in settings, and single-row category edits no longer cascade to
+merchant history.
 
 ## Open questions
 

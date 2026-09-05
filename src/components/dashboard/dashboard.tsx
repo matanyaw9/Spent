@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { getSummary } from "@/lib/api";
@@ -28,24 +28,50 @@ function readViewMode(): CategoryViewMode {
   }
 }
 
+// View mode lives outside React (localStorage plus an in-memory cache for
+// when storage is unavailable) and is read via useSyncExternalStore, which
+// stays hydration-safe: the server snapshot is the default and the client
+// snapshot takes over after hydration.
+const viewModeListeners = new Set<() => void>();
+let viewModeCache: CategoryViewMode | null = null;
+
+function subscribeViewMode(callback: () => void): () => void {
+  viewModeListeners.add(callback);
+  return () => viewModeListeners.delete(callback);
+}
+
+function getViewModeSnapshot(): CategoryViewMode {
+  if (viewModeCache == null) viewModeCache = readViewMode();
+  return viewModeCache;
+}
+
+function getViewModeServerSnapshot(): CategoryViewMode {
+  return "collapsed";
+}
+
+function writeViewMode(mode: CategoryViewMode): void {
+  viewModeCache = mode;
+  try {
+    window.localStorage.setItem(VIEW_MODE_KEY, mode);
+  } catch {
+    // Storage may be unavailable; the in-memory cache still works.
+  }
+  viewModeListeners.forEach((listener) => listener());
+}
+
 export function Dashboard() {
   const t = useTranslations("dashboard");
   const locale = useLocale() as Locale;
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<CategoryViewMode>("collapsed");
+  const viewMode = useSyncExternalStore(
+    subscribeViewMode,
+    getViewModeSnapshot,
+    getViewModeServerSnapshot
+  );
   const queryClient = useQueryClient();
 
-  useEffect(() => {
-    setViewMode(readViewMode());
-  }, []);
-
   const handleViewModeChange = useCallback((mode: CategoryViewMode) => {
-    setViewMode(mode);
-    try {
-      window.localStorage.setItem(VIEW_MODE_KEY, mode);
-    } catch {
-      // Storage may be unavailable; in-memory state still works.
-    }
+    writeViewMode(mode);
   }, []);
 
   const { from, to } = getMonthRange(selectedDate);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -322,9 +322,15 @@ function BudgetSection({
     data ? String(Math.round(data.budget)) : ""
   );
 
-  useEffect(() => {
-    if (data) setAmount(String(Math.round(data.budget)));
-  }, [data]);
+  // Reset the field when the saved budget value changes (guarded update
+  // during render). Keyed on the value, not the query object, so a refetch
+  // returning the same budget doesn't clobber what the user is typing.
+  const budgetValue = data ? String(Math.round(data.budget)) : null;
+  const [prevBudgetValue, setPrevBudgetValue] = useState(budgetValue);
+  if (budgetValue !== prevBudgetValue) {
+    setPrevBudgetValue(budgetValue);
+    if (budgetValue != null) setAmount(budgetValue);
+  }
 
   const handleBlur = () => {
     if (!data) return;
@@ -478,9 +484,13 @@ function GroupSection({
 function DescriptionSection({ category }: { category: Category }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState(category.description ?? "");
-  useEffect(() => {
+  // Reset when the category's saved description changes (guarded update
+  // during render instead of an effect).
+  const [prevDescription, setPrevDescription] = useState(category.description);
+  if (prevDescription !== category.description) {
+    setPrevDescription(category.description);
     setValue(category.description ?? "");
-  }, [category.description]);
+  }
 
   const mutation = useMutation({
     mutationFn: (next: string | null) =>

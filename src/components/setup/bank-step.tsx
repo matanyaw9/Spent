@@ -55,10 +55,10 @@ export function BankStep({ onComplete }: BankStepProps) {
   });
 
   // Pick the right starting view once we've heard back from the query
-  useEffect(() => {
-    if (isPending || sub != null) return;
+  // (guarded state update during render, no effect needed).
+  if (!isPending && sub == null) {
     setSub(integrations.length > 0 ? "ready" : "pick");
-  }, [isPending, integrations.length, sub]);
+  }
 
   const connectedIds = new Set(integrations.map((i) => i.provider));
   const selected = selectedId
@@ -486,9 +486,13 @@ function CredentialForm({
   >("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Adjust state when the target credential changes; a guarded update
+  // during render instead of an effect avoids a wasted extra render pass.
+  const [prevCredentialId, setPrevCredentialId] = useState(credentialId);
+  if (prevCredentialId !== credentialId) {
+    setPrevCredentialId(credentialId);
     setSavedCredentialId(credentialId);
-  }, [credentialId]);
+  }
 
   useEffect(() => {
     if (!isEdit || credentialId == null) return;

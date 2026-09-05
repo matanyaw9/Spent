@@ -163,9 +163,13 @@ function CredentialsForm({
     message: string;
   } | null>(null);
 
-  useEffect(() => {
+  // Adjust state when the target credential changes; a guarded update
+  // during render instead of an effect avoids a wasted extra render pass.
+  const [prevCredentialId, setPrevCredentialId] = useState(credentialId);
+  if (prevCredentialId !== credentialId) {
+    setPrevCredentialId(credentialId);
     setSavedCredentialId(credentialId);
-  }, [credentialId]);
+  }
 
   useEffect(() => {
     if (!isEdit || credentialId == null) return;

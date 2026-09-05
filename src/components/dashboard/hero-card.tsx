@@ -99,7 +99,7 @@ export function HeroCard({ data, loading, monthLabel }: HeroCardProps) {
   ];
 
   const verdict = computeVerdict(budgetedSpent, totalBudget, timeElapsedPercent);
-  const todayPhrase = useTodayPhrase(todayLabel, locale);
+  const todayPhrase = formatTodayPhrase(todayLabel, locale);
 
   const ctaLabel = typicalMonthly
     ? t("setMonthlyTargetWithTypical", {
@@ -185,7 +185,7 @@ export function HeroCard({ data, loading, monthLabel }: HeroCardProps) {
   );
 }
 
-function useTodayPhrase(serverLabel: string, locale: Locale): string {
+function formatTodayPhrase(serverLabel: string, locale: Locale): string {
   // Re-format today's date in the current locale so Hebrew users see Hebrew.
   // The server passed a snapshot, but we re-derive from `new Date()` for the locale.
   try {

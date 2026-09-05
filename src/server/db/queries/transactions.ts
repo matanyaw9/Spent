@@ -10,6 +10,7 @@ import {
   type TrackedCards,
 } from "../../lib/transfers";
 import { normalizeMerchant } from "../../lib/merchant-memory";
+import { toJerusalemDay } from "../../lib/date-utils";
 import type {
   TransactionWithCategory,
   MonthlySummary,
@@ -83,9 +84,13 @@ export function insertTransactions(
 
   const batchInsert = db.transaction(() => {
     for (const txn of transactions) {
+      // Normalize scraped timestamps to the Israel-local day BEFORE hashing
+      // so the dedup hash stays stable across syncs (see toJerusalemDay).
+      const txnDate = toJerusalemDay(txn.date);
+      const processedDate = toJerusalemDay(txn.processedDate);
       const hash = computeDedupHash({
         accountNumber: txn.accountNumber,
-        date: txn.date,
+        date: txnDate,
         originalAmount: txn.originalAmount,
         originalCurrency: txn.originalCurrency,
         description: txn.description,
@@ -107,8 +112,8 @@ export function insertTransactions(
       const params = {
         workspaceId,
         accountNumber: txn.accountNumber,
-        date: txn.date,
-        processedDate: txn.processedDate,
+        date: txnDate,
+        processedDate,
         originalAmount: txn.originalAmount,
         originalCurrency: txn.originalCurrency,
         chargedAmount: txn.chargedAmount,
@@ -348,7 +353,7 @@ const TRANSACTION_LIST_FROM = `
 
 const TRANSACTION_LIST_SELECT = `
   SELECT t.*, c.name AS category_name, c.color AS category_color,
-         bc.label AS account_label
+         c.icon AS category_icon, bc.label AS account_label
   ${TRANSACTION_LIST_FROM}`;
 
 function buildListConditions(
@@ -782,6 +787,7 @@ interface TransactionRow {
   updated_at: string;
   category_name?: string | null;
   category_color?: string | null;
+  category_icon?: string | null;
   account_label?: string | null;
 }
 
@@ -817,6 +823,7 @@ function mapTransactionRow(row: unknown): TransactionWithCategory {
     updatedAt: r.updated_at,
     categoryName: r.category_name ?? null,
     categoryColor: r.category_color ?? null,
+    categoryIcon: r.category_icon ?? null,
   };
 }
 
@@ -832,6 +839,90 @@ export function setTransactionKind(
        WHERE workspace_id = ? AND id = ?`
     )
     .run(kind, workspaceId, id);
+}
+
+/**
+ * One-time repair for rows synced before dates were normalized: convert
+ * ISO-timestamp date/processed_date values to the Israel-local day and
+ * recompute the dedup hash to match what future syncs will produce (the
+ * hash covers the date, so leaving old hashes behind would re-import
+ * every transaction as a duplicate). Idempotent: normalized rows carry
+ * no 'T' in their dates and are never touched again.
+ */
+export function normalizeLegacyTransactionDates(): { updated: number } {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, workspace_id as workspaceId, account_number as accountNumber,
+              date, processed_date as processedDate,
+              original_amount as originalAmount,
+              original_currency as originalCurrency, description, identifier,
+              installment_number as installmentNumber,
+              installment_total as installmentTotal
+       FROM transactions
+       WHERE date LIKE '%T%' OR processed_date LIKE '%T%'
+       ORDER BY id`
+    )
+    .all() as {
+    id: number;
+    workspaceId: number;
+    accountNumber: string;
+    date: string;
+    processedDate: string;
+    originalAmount: number;
+    originalCurrency: string;
+    description: string;
+    identifier: string | null;
+    installmentNumber: number | null;
+    installmentTotal: number | null;
+  }[];
+  if (rows.length === 0) return { updated: 0 };
+
+  const existingCountStmt = db.prepare(
+    `SELECT COUNT(*) as count FROM transactions
+     WHERE workspace_id = ? AND dedup_hash = ? AND date NOT LIKE '%T%'`
+  );
+  const updateStmt = db.prepare(
+    `UPDATE transactions
+     SET date = ?, processed_date = ?, dedup_hash = ?, dedup_sequence = ?,
+         updated_at = datetime('now')
+     WHERE id = ?`
+  );
+
+  db.transaction(() => {
+    // Day-granularity can collapse hashes that time-granularity kept
+    // distinct, so sequences are reassigned per (workspace, new hash),
+    // seeded with any already-normalized rows holding that hash.
+    const seqCounter = new Map<string, number>();
+    for (const row of rows) {
+      const newDate = toJerusalemDay(row.date);
+      const newProcessed = toJerusalemDay(row.processedDate);
+      const newHash = computeDedupHash({
+        accountNumber: row.accountNumber,
+        date: newDate,
+        originalAmount: row.originalAmount,
+        originalCurrency: row.originalCurrency,
+        description: row.description,
+        identifier: row.identifier,
+        installmentNumber: row.installmentNumber,
+        installmentTotal: row.installmentTotal,
+      });
+      const key = `${row.workspaceId}|${newHash}`;
+      let seq = seqCounter.get(key);
+      if (seq == null) {
+        seq = (
+          existingCountStmt.get(row.workspaceId, newHash) as { count: number }
+        ).count;
+      }
+      updateStmt.run(newDate, newProcessed, newHash, seq, row.id);
+      seqCounter.set(key, seq + 1);
+    }
+  })();
+
+  console.log(
+    `[db] normalized ${rows.length} transaction dates to Israel-local days`
+  );
+  return { updated: rows.length };
 }
 
 export interface TransactionAccount {

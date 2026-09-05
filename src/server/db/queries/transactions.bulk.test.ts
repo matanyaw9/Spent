@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
+import { computeDedupHash } from "../../lib/dedup";
 
 // These tests run the real migrations against a throwaway database, then
 // exercise the bulk mutations and filter resolution end to end. The data
@@ -82,6 +83,10 @@ beforeAll(async () => {
   db.prepare(
     `INSERT INTO sync_runs (id, workspace_id, provider, started_at, status, scrape_from_date)
      VALUES (1, 1, 'isracard', datetime('now'), 'completed', '2026-01-01')`
+  ).run();
+  db.prepare(
+    `INSERT INTO bank_credentials (id, workspace_id, provider, credentials_encrypted, iv, auth_tag)
+     VALUES (1, 1, 'discount', x'00', x'00', x'00')`
   ).run();
 
   const categories = db
@@ -364,6 +369,145 @@ describe("manual transactions", () => {
       .prepare(`SELECT COUNT(*) as count FROM transactions WHERE id = ?`)
       .get(manualId) as { count: number };
     expect(gone.count).toBe(0);
+  });
+});
+
+describe("date normalization", () => {
+  const rawTxn = (overrides: Record<string, unknown>) => ({
+    accountNumber: "777",
+    date: "2030-08-31T21:00:00.000Z",
+    processedDate: "2030-08-31T21:00:00.000Z",
+    originalAmount: 100,
+    originalCurrency: "ILS",
+    chargedAmount: 100,
+    chargedCurrency: null,
+    description: "iso salary",
+    memo: null,
+    type: "normal",
+    status: "completed",
+    identifier: null,
+    installmentNumber: null,
+    installmentTotal: null,
+    ...overrides,
+  });
+
+  it("stores scraped UTC timestamps as the Israel-local day, dedup-stable", () => {
+    // 21:00 UTC on Aug 31 is midnight Sept 1 in Israel: the row must land
+    // in September, not fall between the months.
+    const first = queries.insertTransactions(
+      WS,
+      [rawTxn({})] as never,
+      "discount",
+      1,
+      1
+    );
+    expect(first.added).toBe(1);
+
+    const stored = db
+      .prepare(
+        `SELECT date, processed_date FROM transactions WHERE description = 'iso salary'`
+      )
+      .all() as { date: string; processed_date: string }[];
+    expect(stored).toHaveLength(1);
+    expect(stored[0].date).toBe("2030-09-01");
+    expect(stored[0].processed_date).toBe("2030-09-01");
+
+    const septemberIds = queries.resolveFilteredTransactionIds(WS, {
+      from: "2030-09-01",
+      to: "2030-09-30",
+    });
+    const row = db
+      .prepare(`SELECT id FROM transactions WHERE description = 'iso salary'`)
+      .get() as { id: number };
+    expect(septemberIds).toContain(row.id);
+
+    // Re-syncing the exact same scraped payload must dedup, not duplicate.
+    const second = queries.insertTransactions(
+      WS,
+      [rawTxn({})] as never,
+      "discount",
+      1,
+      1
+    );
+    expect(second.added).toBe(0);
+    expect(
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) as count FROM transactions WHERE description = 'iso salary'`
+          )
+          .get() as { count: number }
+      ).count
+    ).toBe(1);
+  });
+
+  it("repairs legacy ISO rows in place so future syncs still dedup", () => {
+    // Simulate a pre-fix row: ISO date stored raw, hash computed from it.
+    const legacyDate = "2030-10-31T22:00:00.000Z"; // Nov 1 in Israel (IST)
+    const legacyHash = computeDedupHash({
+      accountNumber: "777",
+      date: legacyDate,
+      originalAmount: 42,
+      originalCurrency: "ILS",
+      description: "legacy row",
+      identifier: null,
+      installmentNumber: null,
+      installmentTotal: null,
+    });
+    db.prepare(
+      `INSERT INTO transactions (
+         workspace_id, account_number, date, processed_date, original_amount,
+         original_currency, charged_amount, description, type, status,
+         provider, sync_run_id, dedup_hash, dedup_sequence, kind
+       ) VALUES (?, '777', ?, ?, 42, 'ILS', -42, 'legacy row', 'normal',
+                 'completed', 'discount', 1, ?, 0, 'expense')`
+    ).run(WS, legacyDate, legacyDate, legacyHash);
+
+    const result = queries.normalizeLegacyTransactionDates();
+    expect(result.updated).toBeGreaterThanOrEqual(1);
+
+    const stored = db
+      .prepare(
+        `SELECT date FROM transactions WHERE description = 'legacy row'`
+      )
+      .get() as { date: string };
+    expect(stored.date).toBe("2030-11-01");
+
+    // The same scraped payload arriving again must match the repaired row.
+    const resync = queries.insertTransactions(
+      WS,
+      [
+        {
+          accountNumber: "777",
+          date: legacyDate,
+          processedDate: legacyDate,
+          originalAmount: 42,
+          originalCurrency: "ILS",
+          chargedAmount: -42,
+          chargedCurrency: null,
+          description: "legacy row",
+          memo: null,
+          type: "normal",
+          status: "completed",
+          identifier: null,
+          installmentNumber: null,
+          installmentTotal: null,
+        },
+      ] as never,
+      "discount",
+      1,
+      1
+    );
+    expect(resync.added).toBe(0);
+    expect(
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) as count FROM transactions WHERE description = 'legacy row'`
+          )
+          .get() as { count: number }
+      ).count
+    ).toBe(1);
   });
 });
 

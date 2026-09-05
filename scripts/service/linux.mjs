@@ -24,12 +24,20 @@ function whichNode() {
   return r.stdout.trim();
 }
 
-function ensureLogDir() {
+const DATA_DIR = path.join(REPO_ROOT, "data");
+
+function ensureDirs() {
   fs.mkdirSync(LOG_DIR, { recursive: true });
-  try {
-    fs.chmodSync(LOG_DIR, 0o700);
-  } catch {
-    // best-effort
+  // The unit lists the data dir in ReadWritePaths, and systemd refuses to
+  // assemble the sandbox around a path that doesn't exist. On a fresh clone
+  // it doesn't yet (the app creates it lazily), so create it here.
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  for (const dir of [LOG_DIR, DATA_DIR]) {
+    try {
+      fs.chmodSync(dir, 0o700);
+    } catch {
+      // best-effort
+    }
   }
 }
 
@@ -99,7 +107,7 @@ export async function run(cmd, { friendlyUrl }) {
     case "install": {
       preflight();
       ensureSystemdAvailable();
-      ensureLogDir();
+      ensureDirs();
       writeUnit();
       systemctl(["daemon-reload"]);
       systemctl(["enable", "--now", UNIT_NAME]);

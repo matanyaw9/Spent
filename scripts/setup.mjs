@@ -410,8 +410,19 @@ async function main() {
   if (ready) {
     done("server is healthy");
   } else {
-    console.error("   server did not respond within 60s, continuing anyway.");
-    console.error(`   check logs: npm run service:logs`);
+    console.error("");
+    console.error("setup: the service was installed but the server did not become");
+    console.error("       healthy within 60s. Not opening the browser.");
+    console.error("");
+    console.error("Service status:");
+    spawnSync(process.execPath, [SERVICE_INSTALL, "status"], {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+    });
+    console.error("");
+    console.error("More detail:    npm run service:logs");
+    console.error("After fixing:   npm run service:start (or re-run npm run setup)");
+    process.exit(1);
   }
 
   switch (process.platform) {

@@ -6,12 +6,25 @@ under "Shipped so far"; everything above that is the plan.
 
 ## Start here (status log, newest first)
 
-- 2026-09-10: plan v2 approved, decisions recorded (see Decisions).
-  Phase 0 done: `feature/transaction-interface` merged into `main`.
-  Phase 1 in progress on `feature/money-model`: migration 027 (pockets,
-  `pocket_id`, tags), flow fragment, cycle helper, pockets and tags
-  settings, pocket and tag actions in the row menu and bulk bar, flow
-  based KPI cards. Splits deferred.
+- 2026-09-10: **phase 1 (money model) is code complete on
+  `feature/money-model`** and pushed. Shipped: migration 027 (pockets with
+  type / planned monthly / archive, `transactions.pocket_id`, tags and
+  `transaction_tags`, three seeded pockets per workspace), the `flow`
+  fragment in `src/server/lib/flow.ts` that every total now derives from,
+  pocket and tag REST routes, pocket and tag settings pages, a pocket
+  submenu in the row menu, Pocket and Tag actions in the bulk bar, an
+  inline tag picker on every row, pocket and tag filters in the filter
+  bar, a pocket selector in the manual-entry dialog, flow-based KPI cards
+  (Income / Spending / Free cash / Put away) and a Pockets card. Type
+  check, lint and 34 unit tests pass; four new tests cover the pocket
+  moves. Verified end to end against the real database, which was then
+  restored to its pre-test state.
+
+  **Next session starts here.** Two loose ends before phase 2: the cycle
+  helper was not needed (calendar months already are the period, see
+  Decisions) and the new Hebrew message keys hold English placeholders.
+  Then phase 2, `feature/insights-dashboard`, off `main` once this branch
+  merges.
 
 ## Vision, in the owner's words
 

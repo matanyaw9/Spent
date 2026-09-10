@@ -42,6 +42,47 @@ export interface TransactionWithCategory extends Transaction {
   categoryColor: string | null;
   categoryIcon: string | null;
   isExcluded: boolean;
+  /** Set when this row is a movement into or out of one of the user's pockets. */
+  pocketId: number | null;
+  pocketName: string | null;
+  pocketEmoji: string | null;
+  pocketColor: string | null;
+  pocketType: PocketType | null;
+  tags: TransactionTag[];
+}
+
+export type PocketType = "cash" | "savings" | "investment" | "loan" | "other";
+
+/**
+ * A named place the user's own money sits. Moving money into or out of a
+ * pocket is neither spending nor income.
+ */
+export interface Pocket {
+  id: number;
+  name: string;
+  emoji: string | null;
+  color: string;
+  type: PocketType;
+  /** Expected movement per month, if the user set one. */
+  plannedMonthly: number | null;
+  archivedAt: string | null;
+  createdAt: string;
+  transactionCount: number;
+}
+
+/** Flat, cross-cutting label. Never affects totals. */
+export interface Tag {
+  id: number;
+  name: string;
+  color: string;
+  createdAt: string;
+  transactionCount: number;
+}
+
+export interface TransactionTag {
+  id: number;
+  name: string;
+  color: string;
 }
 
 export type CategoryKind = "expense" | "income";

@@ -10,6 +10,8 @@ import {
   Sparkles,
   Layers,
   ShieldAlert,
+  Tag,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -68,6 +70,18 @@ const GROUPS: NavGroup[] = [
         labelKey: "categories",
         Icon: Layers,
         match: (p) => p.startsWith("/settings/categories"),
+      },
+      {
+        href: "/settings/pockets",
+        labelKey: "pockets",
+        Icon: Wallet,
+        match: (p) => p.startsWith("/settings/pockets"),
+      },
+      {
+        href: "/settings/tags",
+        labelKey: "tags",
+        Icon: Tag,
+        match: (p) => p.startsWith("/settings/tags"),
       },
     ],
   },

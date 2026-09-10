@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDb } from "../index";
 import type { Workspace } from "@/lib/types";
+import { seedDefaultPockets } from "./pockets";
 
 interface WorkspaceRow {
   id: number;
@@ -129,6 +130,7 @@ export function createWorkspace(name: string): Workspace {
     for (const c of SEED_CATEGORIES) {
       insertCat.run(id, c.name, c.color, c.icon, c.kind, c.description);
     }
+    seedDefaultPockets(id);
     return id;
   });
 

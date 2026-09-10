@@ -9,6 +9,7 @@ import { previewCategorize } from "@/lib/api";
 import type { CategorizePreview, TransactionsSummary } from "@/lib/api";
 import { formatCurrency } from "@/lib/formatters";
 import { CategorizeReviewDialog } from "@/components/dashboard/categorize-review-dialog";
+import { PocketsCard } from "./pockets-card";
 import type { Locale } from "@/i18n/routing";
 
 interface WidgetsRowProps {
@@ -24,16 +25,17 @@ export function WidgetsRow({ summary, loading }: WidgetsRowProps) {
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-      <div className="lg:col-span-2">
+      <div className="flex flex-col gap-4 lg:col-span-2">
         <TopMerchants merchants={topMerchants} loading={loading} />
-      </div>
-      <div className="flex flex-col gap-4">
-        <PendingReview count={pendingReviewCount} loading={loading} />
         <Outliers
           largestIncome={largestIncome}
           largestExpense={largestExpense}
           loading={loading}
         />
+      </div>
+      <div className="flex flex-col gap-4">
+        <PocketsCard pockets={summary?.pockets ?? []} loading={loading} />
+        <PendingReview count={pendingReviewCount} loading={loading} />
       </div>
     </div>
   );

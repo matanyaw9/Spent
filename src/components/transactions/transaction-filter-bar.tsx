@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { CreditCard, EyeOff, Tags } from "lucide-react";
+import { CreditCard, EyeOff, Tag as TagIcon, Tags, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,7 +24,7 @@ import {
   toggleCategoryFilterSelection,
 } from "@/lib/transaction-filters";
 import { categoryEmoji } from "@/lib/category-emoji";
-import { BANK_PROVIDERS, type Category } from "@/lib/types";
+import { BANK_PROVIDERS, type Category, type Pocket, type Tag } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import type { TransactionAccount, TransactionKindFilter } from "@/lib/api";
 
@@ -42,6 +42,8 @@ export interface AdvancedFilters {
   dateFrom: string;
   dateTo: string;
   accountNumbers: string[];
+  pocketIds: number[];
+  tagIds: number[];
 }
 
 export const EMPTY_ADVANCED_FILTERS: AdvancedFilters = {
@@ -51,6 +53,8 @@ export const EMPTY_ADVANCED_FILTERS: AdvancedFilters = {
   dateFrom: "",
   dateTo: "",
   accountNumbers: [],
+  pocketIds: [],
+  tagIds: [],
 };
 
 export function countActiveAdvancedFilters(value: AdvancedFilters): number {
@@ -59,6 +63,8 @@ export function countActiveAdvancedFilters(value: AdvancedFilters): number {
   if (value.amountMin || value.amountMax) count++;
   if (value.dateFrom || value.dateTo) count++;
   if (value.accountNumbers.length > 0) count++;
+  if (value.pocketIds.length > 0) count++;
+  if (value.tagIds.length > 0) count++;
   return count;
 }
 
@@ -75,6 +81,8 @@ interface TransactionFilterBarProps {
   onChange: (value: AdvancedFilters) => void;
   accounts: TransactionAccount[];
   categories: Category[];
+  pockets: Pocket[];
+  tags: Tag[];
   categoryFilter: number[];
   onCategoryFilterChange: (categoryIds: number[]) => void;
 }
@@ -91,6 +99,8 @@ export function TransactionFilterBar({
   onChange,
   accounts,
   categories,
+  pockets,
+  tags,
   categoryFilter,
   onCategoryFilterChange,
 }: TransactionFilterBarProps) {
@@ -185,6 +195,22 @@ export function TransactionFilterBar({
     (count) => t("filterSelectedCount", { count })
   );
 
+  // --- Pockets and tags ---
+  const pocketDisplay = formatMultiFilterDisplay(
+    pockets
+      .filter((pocket) => value.pocketIds.includes(pocket.id))
+      .map((pocket) => pocket.name),
+    t("filterAny"),
+    (count) => t("filterSelectedCount", { count })
+  );
+  const tagDisplay = formatMultiFilterDisplay(
+    tags.filter((tag) => value.tagIds.includes(tag.id)).map((tag) => tag.name),
+    t("filterAny"),
+    (count) => t("filterSelectedCount", { count })
+  );
+  const toggleId = (list: number[], id: number): number[] =>
+    list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+
   // --- Dates ---
   const prefillDates = () => {
     if (value.dateFrom || value.dateTo) return;
@@ -274,6 +300,61 @@ export function TransactionFilterBar({
               </MultiFilterOption>
             );
           })}
+        </TransactionMultiFilter>
+      )}
+
+      {pockets.length > 0 && (
+        <TransactionMultiFilter
+          label={t("filterPocket")}
+          icon={Wallet}
+          displayValue={pocketDisplay}
+          selectAllLabel={t("filterSelectAll")}
+          clearLabel={t("filterClearSelection")}
+          onSelectAll={() => set({ pocketIds: pockets.map((p) => p.id) })}
+          onClear={() => set({ pocketIds: [] })}
+        >
+          {pockets.map((pocket) => (
+            <MultiFilterOption
+              key={pocket.id}
+              selected={value.pocketIds.includes(pocket.id)}
+              onToggle={() =>
+                set({ pocketIds: toggleId(value.pocketIds, pocket.id) })
+              }
+            >
+              <div className="flex items-center gap-2">
+                <span className="w-4 text-center">{pocket.emoji ?? "•"}</span>
+                <span className="truncate">{pocket.name}</span>
+              </div>
+            </MultiFilterOption>
+          ))}
+        </TransactionMultiFilter>
+      )}
+
+      {tags.length > 0 && (
+        <TransactionMultiFilter
+          label={t("filterTag")}
+          icon={TagIcon}
+          displayValue={tagDisplay}
+          selectAllLabel={t("filterSelectAll")}
+          clearLabel={t("filterClearSelection")}
+          onSelectAll={() => set({ tagIds: tags.map((tag) => tag.id) })}
+          onClear={() => set({ tagIds: [] })}
+        >
+          {tags.map((tag) => (
+            <MultiFilterOption
+              key={tag.id}
+              selected={value.tagIds.includes(tag.id)}
+              onToggle={() => set({ tagIds: toggleId(value.tagIds, tag.id) })}
+            >
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: tag.color }}
+                />
+                <span className="truncate">{tag.name}</span>
+              </div>
+            </MultiFilterOption>
+          ))}
         </TransactionMultiFilter>
       )}
 

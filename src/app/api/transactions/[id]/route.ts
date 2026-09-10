@@ -7,7 +7,9 @@ import {
   setTransactionNote,
   getTransactionContext,
   deleteManualTransaction,
+  setTransactionPocket,
 } from "@/server/db/queries/transactions";
+import { setTransactionTags } from "@/server/db/queries/tags";
 import { recordMerchantCategory } from "@/server/lib/merchant-memory";
 import { recordCorrection } from "@/server/db/queries/category-corrections";
 import { getAllCategories } from "@/server/db/queries/categories";
@@ -108,9 +110,43 @@ export async function PATCH(
     kind?: unknown;
     approve?: unknown;
     note?: unknown;
+    pocketId?: unknown;
+    tagIds?: unknown;
   };
 
   const numericId = Number(id);
+
+  if (body.pocketId !== undefined) {
+    const pocketId = body.pocketId === null ? null : Number(body.pocketId);
+    if (pocketId !== null && (!Number.isInteger(pocketId) || pocketId <= 0)) {
+      return NextResponse.json(
+        { error: "pocketId must be a pocket id or null" },
+        { status: 400 }
+      );
+    }
+    const ok = setTransactionPocket(workspaceId, numericId, pocketId);
+    if (!ok) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    return NextResponse.json({ success: true });
+  }
+
+  if (body.tagIds !== undefined) {
+    if (
+      !Array.isArray(body.tagIds) ||
+      !body.tagIds.every((n) => Number.isInteger(n) && n > 0)
+    ) {
+      return NextResponse.json(
+        { error: "tagIds must be an array of tag ids" },
+        { status: 400 }
+      );
+    }
+    const ok = setTransactionTags(workspaceId, numericId, body.tagIds as number[]);
+    if (!ok) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    return NextResponse.json({ success: true });
+  }
 
   if (body.note !== undefined) {
     if (body.note !== null && typeof body.note !== "string") {

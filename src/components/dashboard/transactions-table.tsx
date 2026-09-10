@@ -24,6 +24,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,7 +40,9 @@ import {
   EyeOff,
   Eye,
   StickyNote,
+  Tag as TagIcon,
   Trash2,
+  Wallet,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency, formatDate } from "@/lib/formatters";
@@ -48,6 +53,8 @@ import {
   approveTransactionCategory,
   deleteTransaction,
   setTransactionExcluded,
+  setTransactionPocket,
+  setTransactionTags,
 } from "@/lib/api";
 import {
   Dialog,
@@ -57,6 +64,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { CategoryPicker } from "@/components/transactions/category-picker";
+import { PocketMenuItems } from "@/components/transactions/pocket-menu-items";
+import { TagPicker } from "@/components/transactions/tag-picker";
+import { TagChip } from "@/components/transactions/tag-chip";
 import { toast } from "sonner";
 import { translateCategoryName } from "@/lib/i18n-data";
 import { categoryEmoji } from "@/lib/category-emoji";
@@ -64,7 +74,7 @@ import { TransactionSourceCell } from "@/components/transactions/transaction-sou
 import { SortableTableHead } from "@/components/transactions/sortable-table-head";
 import type { SortOrder, TransactionSortField } from "@/lib/transaction-sort";
 import { cn } from "@/lib/utils";
-import type { TransactionWithCategory } from "@/lib/types";
+import type { Pocket, Tag, TransactionWithCategory } from "@/lib/types";
 import type { Locale } from "@/i18n/routing";
 
 type Kind = "expense" | "income" | "transfer";
@@ -236,6 +246,45 @@ export function TransactionsTable({
       queryClient.invalidateQueries({ queryKey: ["transactions-summary"] });
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const handlePocketChange = async (
+    txn: TransactionWithCategory,
+    pocket: Pocket | null
+  ) => {
+    setUpdatingId(txn.id);
+    try {
+      await setTransactionPocket(txn.id, pocket?.id ?? null);
+      invalidateAfterExclude();
+      queryClient.invalidateQueries({ queryKey: ["pockets"] });
+      toast.success(
+        pocket
+          ? t("pocketMovedToast", { pocket: pocket.name })
+          : t("pocketRemovedToast")
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleTagToggle = async (
+    txn: TransactionWithCategory,
+    tag: Tag,
+    add: boolean
+  ) => {
+    const current = txn.tags.map((item) => item.id);
+    const next = add
+      ? [...new Set([...current, tag.id])]
+      : current.filter((id) => id !== tag.id);
+    try {
+      await setTransactionTags(txn.id, next);
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["tags"] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
     }
   };
 
@@ -458,7 +507,11 @@ export function TransactionsTable({
                 {transactions.map((txn, index) => {
                   const isIncome = txn.chargedAmount > 0;
                   const isTransfer = txn.kind === "transfer";
-                  const notCountedRow = txn.isExcluded || isTransfer;
+                  const inPocket = txn.pocketId != null;
+                  // A pocket movement is real money going somewhere and
+                  // gets its own chip; only excluded rows and plain
+                  // transfers get the "ignored" look.
+                  const notCountedRow = txn.isExcluded || (isTransfer && !inPocket);
                   const selected = isRowSelected(txn.id);
                   const directionColor = isIncome
                     ? "var(--status-on-track)"
@@ -477,7 +530,7 @@ export function TransactionsTable({
                       key={txn.id}
                       onClick={(e) => handleRowBackgroundClick(index, e)}
                       className={cn(
-                        "transition-colors duration-200 hover:bg-muted/50",
+                        "group/row transition-colors duration-200 hover:bg-muted/50",
                         notCountedRow && "opacity-50",
                         selected && "bg-accent/40 hover:bg-accent/50",
                         hasSelectionActive && "select-none",
@@ -493,7 +546,11 @@ export function TransactionsTable({
                         </TableCell>
                       )}
                       <TableCell>
-                        {isTransfer ? (
+                        {inPocket ? (
+                          <div style={{ color: txn.pocketColor ?? undefined }}>
+                            <Wallet className="h-4 w-4" />
+                          </div>
+                        ) : isTransfer ? (
                           <div className="text-muted-foreground">
                             <ArrowLeftRight className="h-4 w-4" />
                           </div>
@@ -548,7 +605,29 @@ export function TransactionsTable({
                               {t("chipExcluded")}
                             </button>
                           )}
-                          {!txn.isExcluded && isTransfer && (
+                          {!txn.isExcluded && inPocket && (
+                            <span
+                              title={t("chipPocketTooltip", {
+                                pocket: txn.pocketName ?? "",
+                              })}
+                              className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
+                              style={{
+                                borderColor: (txn.pocketColor ?? "#999") + "55",
+                                backgroundColor: (txn.pocketColor ?? "#999") + "1A",
+                              }}
+                            >
+                              {isIncome ? (
+                                <ArrowUpRight className="h-3 w-3" />
+                              ) : (
+                                <ArrowDownRight className="h-3 w-3" />
+                              )}
+                              {txn.pocketEmoji ? (
+                                <span>{txn.pocketEmoji}</span>
+                              ) : null}
+                              {txn.pocketName}
+                            </span>
+                          )}
+                          {!txn.isExcluded && isTransfer && !inPocket && (
                             <span
                               title={t("chipTransferTooltip")}
                               className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
@@ -557,6 +636,23 @@ export function TransactionsTable({
                               {t("chipTransfer")}
                             </span>
                           )}
+                          <TagPicker
+                            selectedIds={txn.tags.map((tag) => tag.id)}
+                            onToggle={(tag, add) => handleTagToggle(txn, tag, add)}
+                            triggerClassName={cn(
+                              "inline-flex items-center gap-1 rounded-full",
+                              txn.tags.length === 0 &&
+                                "text-muted-foreground/70 opacity-0 transition-opacity hover:text-foreground group-hover/row:opacity-100 data-[popup-open]:opacity-100"
+                            )}
+                          >
+                            {txn.tags.length === 0 ? (
+                              <span title={t("tagAdd")}>
+                                <TagIcon className="h-3 w-3" />
+                              </span>
+                            ) : (
+                              txn.tags.map((tag) => <TagChip key={tag.id} tag={tag} />)
+                            )}
+                          </TagPicker>
                         </div>
                         {txn.memo && (
                           <div className="text-xs text-muted-foreground">
@@ -651,7 +747,7 @@ export function TransactionsTable({
                           notCountedRow && "line-through decoration-1",
                         )}
                         style={{
-                          color: notCountedRow
+                          color: notCountedRow || inPocket
                             ? "var(--muted-foreground)"
                             : directionColor,
                         }}
@@ -676,6 +772,18 @@ export function TransactionsTable({
                                 {opt.label}
                               </DropdownMenuItem>
                             ))}
+                            <DropdownMenuSub>
+                              <DropdownMenuSubTrigger>
+                                <Wallet className="me-2 h-3.5 w-3.5" />
+                                {inPocket ? t("pocketChange") : t("pocketMoveTo")}
+                              </DropdownMenuSubTrigger>
+                              <DropdownMenuSubContent>
+                                <PocketMenuItems
+                                  currentPocketId={txn.pocketId}
+                                  onSelect={(pocket) => handlePocketChange(txn, pocket)}
+                                />
+                              </DropdownMenuSubContent>
+                            </DropdownMenuSub>
                             <DropdownMenuItem
                               onClick={() => openNoteDialog(txn)}
                             >

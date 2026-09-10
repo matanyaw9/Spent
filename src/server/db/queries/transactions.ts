@@ -11,7 +11,10 @@ import {
 } from "../../lib/transfers";
 import { normalizeMerchant } from "../../lib/merchant-memory";
 import { toJerusalemDay } from "../../lib/date-utils";
+import { FLOWS, FLOW_CASE, FLOW_JOIN, type Flow } from "../../lib/flow";
 import type {
+  PocketType,
+  TransactionTag,
   TransactionWithCategory,
   MonthlySummary,
   MerchantSummary,
@@ -323,6 +326,10 @@ export interface TransactionListFilter {
   amountMax?: number;
   /** Filter to specific cards/accounts (transactions.account_number). */
   accountNumbers?: string[];
+  /** Only rows moved into or out of these pockets. */
+  pocketIds?: number[];
+  /** Only rows carrying at least one of these tags. */
+  tagIds?: number[];
 }
 
 interface QueryParams extends TransactionListFilter {
@@ -355,11 +362,20 @@ function resolveSortSql(sort: string | undefined): string {
 const TRANSACTION_LIST_FROM = `
   FROM transactions t
   LEFT JOIN categories c ON t.category_id = c.id
-  LEFT JOIN bank_credentials bc ON t.credential_id = bc.id`;
+  LEFT JOIN bank_credentials bc ON t.credential_id = bc.id
+  LEFT JOIN pockets p ON t.pocket_id = p.id`;
 
+// Tags ride along as one JSON array per row so the list stays a single
+// query; the mapper parses it.
 const TRANSACTION_LIST_SELECT = `
   SELECT t.*, c.name AS category_name, c.color AS category_color,
-         c.icon AS category_icon, bc.label AS account_label
+         c.icon AS category_icon, bc.label AS account_label,
+         p.name AS pocket_name, p.emoji AS pocket_emoji,
+         p.color AS pocket_color, p.type AS pocket_type,
+         (SELECT json_group_array(json_object('id', g.id, 'name', g.name, 'color', g.color))
+            FROM transaction_tags tt JOIN tags g ON g.id = tt.tag_id
+            WHERE tt.transaction_id = t.id
+            ORDER BY g.name COLLATE NOCASE) AS tags_json
   ${TRANSACTION_LIST_FROM}`;
 
 function buildListConditions(
@@ -403,10 +419,15 @@ function buildListConditions(
   if (!params.includeDuplicates) {
     conditions.push("(t.kind != 'transfer' OR t.kind_source != 'auto')");
   }
+  // Pocket movements stay visible in the default view even though they
+  // are transfers: "moved to Investments" is something the user wants to
+  // see, unlike a plain internal transfer.
   if (params.notCounted === "only") {
     conditions.push("(t.is_excluded = 1 OR t.kind = 'transfer')");
   } else if (params.notCounted === "hidden") {
-    conditions.push("t.is_excluded = 0 AND t.kind != 'transfer'");
+    conditions.push(
+      "t.is_excluded = 0 AND (t.kind != 'transfer' OR t.pocket_id IS NOT NULL)"
+    );
   }
   if (params.amountMin != null) {
     conditions.push("ABS(t.charged_amount) >= ?");
@@ -420,6 +441,18 @@ function buildListConditions(
     const placeholders = params.accountNumbers.map(() => "?").join(",");
     conditions.push(`t.account_number IN (${placeholders})`);
     for (const acc of params.accountNumbers) values.push(acc);
+  }
+  if (params.pocketIds && params.pocketIds.length > 0) {
+    const placeholders = params.pocketIds.map(() => "?").join(",");
+    conditions.push(`t.pocket_id IN (${placeholders})`);
+    for (const id of params.pocketIds) values.push(id);
+  }
+  if (params.tagIds && params.tagIds.length > 0) {
+    const placeholders = params.tagIds.map(() => "?").join(",");
+    conditions.push(
+      `EXISTS (SELECT 1 FROM transaction_tags tt WHERE tt.transaction_id = t.id AND tt.tag_id IN (${placeholders}))`
+    );
+    for (const id of params.tagIds) values.push(id);
   }
   if (params.provider) {
     conditions.push("t.provider = ?");
@@ -799,6 +832,32 @@ interface TransactionRow {
   category_color?: string | null;
   category_icon?: string | null;
   account_label?: string | null;
+  pocket_id?: number | null;
+  pocket_name?: string | null;
+  pocket_emoji?: string | null;
+  pocket_color?: string | null;
+  pocket_type?: string | null;
+  tags_json?: string | null;
+}
+
+function parseTags(raw: string | null | undefined): TransactionTag[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is TransactionTag =>
+          item != null &&
+          typeof item === "object" &&
+          typeof (item as TransactionTag).id === "number" &&
+          typeof (item as TransactionTag).name === "string" &&
+          typeof (item as TransactionTag).color === "string"
+      )
+      .map((item) => ({ id: item.id, name: item.name, color: item.color }));
+  } catch {
+    return [];
+  }
 }
 
 function mapTransactionRow(row: unknown): TransactionWithCategory {
@@ -835,6 +894,12 @@ function mapTransactionRow(row: unknown): TransactionWithCategory {
     categoryName: r.category_name ?? null,
     categoryColor: r.category_color ?? null,
     categoryIcon: r.category_icon ?? null,
+    pocketId: r.pocket_id ?? null,
+    pocketName: r.pocket_name ?? null,
+    pocketEmoji: r.pocket_emoji ?? null,
+    pocketColor: r.pocket_color ?? null,
+    pocketType: (r.pocket_type as PocketType | null | undefined) ?? null,
+    tags: parseTags(r.tags_json),
   };
 }
 
@@ -850,6 +915,64 @@ export function setTransactionKind(
        WHERE workspace_id = ? AND id = ?`
     )
     .run(kind, workspaceId, id);
+}
+
+/**
+ * Put a transaction in a pocket (or take it out). A pocket movement is a
+ * transfer by definition, so the kind follows: in -> transfer; out -> back
+ * to expense or income by the sign of the amount. Both are user decisions
+ * (kind_source = 'user') and survive the auto reclassification pass. The
+ * category is left alone: it is ignored while the row is a transfer and
+ * comes back intact if the move was a mistake.
+ */
+export function setTransactionPocket(
+  workspaceId: number,
+  id: number,
+  pocketId: number | null
+): boolean {
+  return bulkSetTransactionPocket(workspaceId, [id], pocketId) > 0;
+}
+
+export function bulkSetTransactionPocket(
+  workspaceId: number,
+  ids: number[],
+  pocketId: number | null
+): number {
+  if (ids.length === 0) return 0;
+  const db = getDb();
+  if (pocketId != null) {
+    const owned = db
+      .prepare(`SELECT 1 FROM pockets WHERE workspace_id = ? AND id = ?`)
+      .get(workspaceId, pocketId);
+    if (!owned) return 0;
+  }
+  let updated = 0;
+  db.transaction(() => {
+    for (const chunk of chunkIds(ids)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const result =
+        pocketId != null
+          ? db
+              .prepare(
+                `UPDATE transactions
+                 SET pocket_id = ?, kind = 'transfer', kind_source = 'user',
+                     needs_review = 0, updated_at = datetime('now')
+                 WHERE workspace_id = ? AND id IN (${placeholders})`
+              )
+              .run(pocketId, workspaceId, ...chunk)
+          : db
+              .prepare(
+                `UPDATE transactions
+                 SET pocket_id = NULL,
+                     kind = CASE WHEN charged_amount > 0 THEN 'income' ELSE 'expense' END,
+                     kind_source = 'user', updated_at = datetime('now')
+                 WHERE workspace_id = ? AND pocket_id IS NOT NULL AND id IN (${placeholders})`
+              )
+              .run(workspaceId, ...chunk);
+      updated += result.changes;
+    }
+  })();
+  return updated;
 }
 
 /**
@@ -1298,6 +1421,22 @@ export interface TransactionsSummary {
     count: number;
     total: number;
   };
+  /** Every row in range classified by the money model (see server/lib/flow). */
+  flows: Record<Flow, { total: number; count: number }>;
+  /** Movement per pocket in range, planned amount alongside. */
+  pockets: PocketSummary[];
+}
+
+export interface PocketSummary {
+  pocketId: number;
+  name: string;
+  emoji: string | null;
+  color: string;
+  type: PocketType;
+  plannedMonthly: number | null;
+  moneyIn: number;
+  moneyOut: number;
+  count: number;
 }
 
 export interface TransactionsSummaryParams {
@@ -1425,6 +1564,43 @@ export function getTransactionsSummary(
     )
     .get(...baseValues) as { count: number };
 
+  const flowConditions = ["t.workspace_id = ?", "t.date >= ?", "t.date <= ?", "t.status = 'completed'"];
+  const flowValues: (string | number)[] = [workspaceId, from, to];
+  appendCredentialIdsFilter(flowConditions, flowValues, summaryCredentialIds, "t.");
+  const flowRows = db
+    .prepare(
+      `SELECT ${FLOW_CASE} AS flow,
+              COALESCE(SUM(ABS(t.charged_amount)), 0) AS total,
+              COUNT(*) AS count
+       FROM transactions t ${FLOW_JOIN}
+       WHERE ${flowConditions.join(" AND ")}
+       GROUP BY flow`
+    )
+    .all(...flowValues) as { flow: Flow; total: number; count: number }[];
+  const flows = Object.fromEntries(
+    FLOWS.map((f) => [f, { total: 0, count: 0 }])
+  ) as Record<Flow, { total: number; count: number }>;
+  for (const row of flowRows) {
+    if (row.flow in flows) flows[row.flow] = { total: row.total, count: row.count };
+  }
+
+  const pocketRows = db
+    .prepare(
+      `SELECT p.id AS pocketId, p.name, p.emoji, p.color, p.type,
+              p.planned_monthly AS plannedMonthly,
+              COALESCE(SUM(CASE WHEN t.charged_amount < 0 THEN -t.charged_amount ELSE 0 END), 0) AS moneyIn,
+              COALESCE(SUM(CASE WHEN t.charged_amount > 0 THEN t.charged_amount ELSE 0 END), 0) AS moneyOut,
+              COUNT(t.id) AS count
+       FROM pockets p
+       LEFT JOIN transactions t
+         ON t.pocket_id = p.id AND t.date >= ? AND t.date <= ?
+        AND t.status = 'completed' AND t.is_excluded = 0
+       WHERE p.workspace_id = ? AND p.archived_at IS NULL
+       GROUP BY p.id
+       ORDER BY p.id`
+    )
+    .all(from, to, workspaceId) as PocketSummary[];
+
   return {
     income: {
       total: incomeAgg.total,
@@ -1441,6 +1617,8 @@ export function getTransactionsSummary(
     pendingReviewCount: pendingReview.count,
     notCounted,
     duplicates,
+    flows,
+    pockets: pocketRows,
   };
 }
 

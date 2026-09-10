@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   createManualTransaction,
   queryTransactions,
+  setTransactionPocket,
   type TransactionKindFilter,
 } from "@/server/db/queries/transactions";
 import { getAllCategories } from "@/server/db/queries/categories";
@@ -29,6 +30,15 @@ export async function GET(request: Request) {
     .getAll("credentialIds")
     .map((v) => Number(v))
     .filter((n) => Number.isFinite(n) && n > 0);
+
+  const pocketIds = searchParams
+    .getAll("pocketIds")
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  const tagIds = searchParams
+    .getAll("tagIds")
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0);
 
   const result = queryTransactions(workspaceId, {
     from: searchParams.get("from") ?? undefined,
@@ -65,6 +75,8 @@ export async function GET(request: Request) {
     })(),
     provider: searchParams.get("provider") ?? undefined,
     credentialIds: credentialIds.length > 0 ? credentialIds : undefined,
+    pocketIds: pocketIds.length > 0 ? pocketIds : undefined,
+    tagIds: tagIds.length > 0 ? tagIds : undefined,
   });
 
   return NextResponse.json(result);
@@ -77,6 +89,7 @@ interface ManualBody {
   description?: unknown;
   categoryId?: unknown;
   memo?: unknown;
+  pocketId?: unknown;
 }
 
 /** Create a manual transaction (cash and the like). */
@@ -137,6 +150,14 @@ export async function POST(request: Request) {
     categoryId,
     memo: typeof body.memo === "string" && body.memo.trim() ? body.memo.trim() : null,
   });
+
+  // A manual transfer into or out of a pocket (cash withdrawal, savings).
+  if (body.kind === "transfer" && body.pocketId != null) {
+    const pocketId = Number(body.pocketId);
+    if (Number.isInteger(pocketId) && pocketId > 0) {
+      setTransactionPocket(workspaceId, id, pocketId);
+    }
+  }
 
   return NextResponse.json({ id }, { status: 201 });
 }

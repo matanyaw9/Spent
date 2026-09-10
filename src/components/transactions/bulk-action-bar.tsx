@@ -8,7 +8,9 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Tag as TagIcon,
   Tags,
+  Wallet,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +21,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CategoryPicker } from "./category-picker";
+import { PocketMenuItems } from "./pocket-menu-items";
+import { TagPicker } from "./tag-picker";
 import type { BulkTransactionAction } from "@/lib/api";
 
 interface BulkActionBarProps {
@@ -97,6 +101,34 @@ export function BulkActionBar({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            disabled={pending}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+          >
+            <Wallet className="h-3.5 w-3.5" />
+            {t("bulkPocket")}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" side="top">
+            <PocketMenuItems
+              onSelect={(pocket) =>
+                onAction({ type: "pocket", pocketId: pocket?.id ?? null })
+              }
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <TagPicker
+          disabled={pending}
+          align="center"
+          side="top"
+          onToggle={(tag, add) => onAction({ type: "tag", tagId: tag.id, add })}
+          triggerClassName="inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+        >
+          <TagIcon className="h-3.5 w-3.5" />
+          {t("bulkTag")}
+        </TagPicker>
 
         <Button
           type="button"

@@ -4,11 +4,13 @@ import {
   bulkClearCategory,
   bulkSetTransactionExcluded,
   bulkSetTransactionKind,
+  bulkSetTransactionPocket,
   resolveFilteredTransactionIds,
   type TransactionKindFilter,
   type TransactionListFilter,
 } from "@/server/db/queries/transactions";
 import { getAllCategories } from "@/server/db/queries/categories";
+import { bulkSetTag } from "@/server/db/queries/tags";
 import { recordMerchantCategory } from "@/server/lib/merchant-memory";
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
 
@@ -29,6 +31,9 @@ interface BulkBody {
     categoryId?: unknown;
     kind?: unknown;
     excluded?: unknown;
+    pocketId?: unknown;
+    tagId?: unknown;
+    add?: unknown;
   };
 }
 
@@ -77,6 +82,8 @@ function parseFilter(raw: unknown): TransactionListFilter | null {
     accountNumbers: Array.isArray(f.accountNumbers)
       ? f.accountNumbers.filter((a): a is string => typeof a === "string")
       : undefined,
+    pocketIds: parseNumberArray(f.pocketIds),
+    tagIds: parseNumberArray(f.tagIds),
   };
 }
 
@@ -145,6 +152,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ updated, skipped: ids.length - updated });
   }
 
+  if (action.type === "pocket") {
+    if (action.pocketId === null) {
+      const updated = bulkSetTransactionPocket(workspaceId, ids, null);
+      return NextResponse.json({ updated, skipped: ids.length - updated });
+    }
+    const pocketId = Number(action.pocketId);
+    if (!Number.isInteger(pocketId) || pocketId <= 0) {
+      return NextResponse.json(
+        { error: "action.pocketId must be a pocket id or null" },
+        { status: 400 }
+      );
+    }
+    const updated = bulkSetTransactionPocket(workspaceId, ids, pocketId);
+    if (updated === 0 && ids.length > 0) {
+      return NextResponse.json({ error: "unknown pocket" }, { status: 400 });
+    }
+    return NextResponse.json({ updated, skipped: ids.length - updated });
+  }
+
+  if (action.type === "tag") {
+    const tagId = Number(action.tagId);
+    if (!Number.isInteger(tagId) || tagId <= 0 || typeof action.add !== "boolean") {
+      return NextResponse.json(
+        { error: "action.tagId and action.add are required" },
+        { status: 400 }
+      );
+    }
+    const updated = bulkSetTag(workspaceId, ids, tagId, action.add);
+    return NextResponse.json({ updated, skipped: ids.length - updated });
+  }
+
   if (action.type === "category") {
     // null means "uncategorized": clear the category on every target row.
     if (action.categoryId === null) {
@@ -195,7 +233,7 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json(
-    { error: "action.type must be 'category', 'kind', or 'exclude'" },
+    { error: "action.type must be 'category', 'kind', 'exclude', 'pocket', or 'tag'" },
     { status: 400 }
   );
 }

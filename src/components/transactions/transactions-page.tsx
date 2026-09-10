@@ -27,6 +27,8 @@ import {
   getCategories,
   getTransactions,
   getTransactionsSummary,
+  listPockets,
+  listTags,
   listTransactionAccounts,
 } from "@/lib/api";
 import type { BulkTransactionAction, TransactionKindFilter } from "@/lib/api";
@@ -81,6 +83,10 @@ export function TransactionsPage() {
     advancedFilters.accountNumbers.length > 0
       ? advancedFilters.accountNumbers
       : undefined;
+  const pocketIdsFilter =
+    advancedFilters.pocketIds.length > 0 ? advancedFilters.pocketIds : undefined;
+  const tagIdsFilter =
+    advancedFilters.tagIds.length > 0 ? advancedFilters.tagIds : undefined;
 
   // Changing filters keeps the concrete selection (ids stay valid even
   // when rows scroll out of the current view); only the abstract "all
@@ -107,6 +113,14 @@ export function TransactionsPage() {
   const accountsQuery = useQuery({
     queryKey: ["transaction-accounts"],
     queryFn: () => listTransactionAccounts(),
+  });
+  const pocketsQuery = useQuery({
+    queryKey: ["pockets"],
+    queryFn: () => listPockets(),
+  });
+  const tagsQuery = useQuery({
+    queryKey: ["tags"],
+    queryFn: () => listTags(),
   });
   const cardNicknames = useMemo(() => {
     const map = new Map<string, string>();
@@ -149,6 +163,8 @@ export function TransactionsPage() {
         amountMin,
         amountMax,
         accountNumbers: accountNumbersFilter,
+        pocketIds: pocketIdsFilter,
+        tagIds: tagIdsFilter,
       }),
     placeholderData: keepPreviousData,
   });
@@ -239,6 +255,8 @@ export function TransactionsPage() {
               amountMin,
               amountMax,
               accountNumbers: accountNumbersFilter,
+              pocketIds: pocketIdsFilter,
+              tagIds: tagIdsFilter,
             },
           }
         : { ids: [...selectedIds] };
@@ -250,6 +268,8 @@ export function TransactionsPage() {
         "categories",
         "home",
         "excluded-merchants",
+        "pockets",
+        "tags",
       ]) {
         queryClient.invalidateQueries({ queryKey: [key] });
       }
@@ -325,6 +345,8 @@ export function TransactionsPage() {
               }}
               accounts={accountsQuery.data ?? []}
               categories={allCategoriesQuery.data ?? []}
+              pockets={pocketsQuery.data ?? []}
+              tags={tagsQuery.data ?? []}
               categoryFilter={categoryFilter}
               onCategoryFilterChange={(ids) => {
                 setCategoryFilter(ids);

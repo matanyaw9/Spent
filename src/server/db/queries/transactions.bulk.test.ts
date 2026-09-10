@@ -124,6 +124,71 @@ describe("bulkSetTransactionKind", () => {
   });
 });
 
+describe("bulkSetTransactionPocket", () => {
+  function pocketId(type: string): number {
+    return (
+      db
+        .prepare(`SELECT id FROM pockets WHERE workspace_id = ? AND type = ?`)
+        .get(WS, type) as { id: number }
+    ).id;
+  }
+
+  it("moves rows into a pocket as user-made transfers and keeps the category", () => {
+    const a = insertTxn({ amount: -500, kind: "expense" });
+    db.prepare(
+      `UPDATE transactions SET category_id = ?, category_source = 'user' WHERE id = ?`
+    ).run(expenseCategoryId, a);
+    const investments = pocketId("investment");
+
+    expect(queries.bulkSetTransactionPocket(WS, [a], investments)).toBe(1);
+    expect(getRow(a)).toMatchObject({
+      kind: "transfer",
+      kind_source: "user",
+      category_id: expenseCategoryId,
+    });
+    const row = db
+      .prepare(`SELECT pocket_id FROM transactions WHERE id = ?`)
+      .get(a) as { pocket_id: number | null };
+    expect(row.pocket_id).toBe(investments);
+  });
+
+  it("removing from a pocket restores expense or income by amount sign", () => {
+    const out = insertTxn({ amount: -300, kind: "expense" });
+    const back = insertTxn({ amount: 300, kind: "income" });
+    const savings = pocketId("savings");
+    queries.bulkSetTransactionPocket(WS, [out, back], savings);
+
+    expect(queries.bulkSetTransactionPocket(WS, [out, back], null)).toBe(2);
+    expect(getRow(out).kind).toBe("expense");
+    expect(getRow(back).kind).toBe("income");
+  });
+
+  it("rejects a pocket from another workspace and rows outside the workspace", () => {
+    const a = insertTxn({ amount: -50, kind: "expense" });
+    expect(queries.bulkSetTransactionPocket(WS, [a], 999999)).toBe(0);
+    expect(queries.bulkSetTransactionPocket(999, [a], pocketId("cash"))).toBe(0);
+    expect(getRow(a).kind).toBe("expense");
+  });
+
+  it("pocket rows leave spending and land in the matching flow", () => {
+    const a = insertTxn({ amount: -700, kind: "expense", date: "2026-03-10" });
+    const before = queries.getTransactionsSummary(WS, "2026-03-01", "2026-03-31");
+    queries.bulkSetTransactionPocket(WS, [a], pocketId("investment"));
+    const after = queries.getTransactionsSummary(WS, "2026-03-01", "2026-03-31");
+
+    expect(after.flows.spending.total).toBe(before.flows.spending.total - 700);
+    expect(after.flows.investing.total).toBe(before.flows.investing.total + 700);
+    expect(after.pockets.find((p) => p.type === "investment")?.moneyIn).toBe(700);
+    // The default list keeps pocket movements visible; plain transfers hide.
+    const listed = queries.resolveFilteredTransactionIds(WS, {
+      from: "2026-03-01",
+      to: "2026-03-31",
+      notCounted: "hidden",
+    });
+    expect(listed).toContain(a);
+  });
+});
+
 describe("bulkSetTransactionExcluded", () => {
   it("toggles is_excluded for all given ids", () => {
     const a = insertTxn({ amount: -10, kind: "expense" });

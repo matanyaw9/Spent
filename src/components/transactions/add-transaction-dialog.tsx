@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { ChevronDown, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -18,7 +18,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CategoryPicker } from "./category-picker";
-import { createManualTransaction, type TransactionKind } from "@/lib/api";
+import {
+  createManualTransaction,
+  listPockets,
+  type TransactionKind,
+} from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { translateCategoryName } from "@/lib/i18n-data";
 import { cn } from "@/lib/utils";
 import type { Category } from "@/lib/types";
@@ -44,7 +55,13 @@ export function AddTransactionDialog() {
   const [kind, setKind] = useState<TransactionKind>("expense");
   const [category, setCategory] = useState<Category | null>(null);
   const [memo, setMemo] = useState("");
+  const [pocketId, setPocketId] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const pocketsQuery = useQuery({
+    queryKey: ["pockets"],
+    queryFn: () => listPockets(),
+    enabled: open,
+  });
 
   const reset = () => {
     setDate(todayLocalISO());
@@ -53,6 +70,7 @@ export function AddTransactionDialog() {
     setKind("expense");
     setCategory(null);
     setMemo("");
+    setPocketId("");
   };
 
   const kindOptions: { value: TransactionKind; label: string }[] = [
@@ -87,6 +105,7 @@ export function AddTransactionDialog() {
         description: description.trim(),
         categoryId: category?.id ?? null,
         memo: memo.trim() || null,
+        pocketId: kind === "transfer" && pocketId ? Number(pocketId) : null,
       });
       for (const key of [
         "transactions",
@@ -94,6 +113,7 @@ export function AddTransactionDialog() {
         "transactions-summary",
         "home",
         "categories",
+        "pockets",
       ]) {
         queryClient.invalidateQueries({ queryKey: [key] });
       }
@@ -176,6 +196,31 @@ export function AddTransactionDialog() {
               placeholder={t("addTransactionDescriptionPlaceholder")}
             />
           </div>
+
+          {kind === "transfer" && (
+            <div className="space-y-1.5">
+              <Label>{t("addTransactionPocket")}</Label>
+              <Select
+                value={pocketId}
+                onValueChange={(v) => setPocketId(v ?? "")}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={t("addTransactionPickPocket")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(pocketsQuery.data ?? []).map((pocket) => (
+                    <SelectItem key={pocket.id} value={String(pocket.id)}>
+                      <span className="me-1.5">{pocket.emoji}</span>
+                      {pocket.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {t("addTransactionPocketHint")}
+              </p>
+            </div>
+          )}
 
           {kind !== "transfer" && (
             <div className="space-y-1.5">

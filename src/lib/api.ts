@@ -11,6 +11,9 @@ import type {
   Workspace,
   HomePayload,
   ActivitySnapshot,
+  Pocket,
+  PocketType,
+  Tag,
 } from "./types";
 import { getActiveWorkspaceIdSync } from "./workspace-store";
 
@@ -185,6 +188,34 @@ export interface TransactionsSummary {
     count: number;
     total: number;
   };
+  /** Every row in range classified by the money model. */
+  flows: Record<Flow, { total: number; count: number }>;
+  /** Movement per (unarchived) pocket in range, with the planned amount. */
+  pockets: PocketSummary[];
+}
+
+export type Flow =
+  | "spending"
+  | "income"
+  | "investing"
+  | "saving"
+  | "debtRepayment"
+  | "debtTaken"
+  | "cashWithdrawal"
+  | "pocketOut"
+  | "internal"
+  | "excluded";
+
+export interface PocketSummary {
+  pocketId: number;
+  name: string;
+  emoji: string | null;
+  color: string;
+  type: PocketType;
+  plannedMonthly: number | null;
+  moneyIn: number;
+  moneyOut: number;
+  count: number;
 }
 
 export function getTransactionsSummary(params: {
@@ -218,6 +249,8 @@ export function getTransactions(params: {
   amountMin?: number;
   amountMax?: number;
   accountNumbers?: string[];
+  pocketIds?: number[];
+  tagIds?: number[];
 }) {
   const searchParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -244,6 +277,8 @@ export interface BulkTransactionFilter {
   amountMin?: number;
   amountMax?: number;
   accountNumbers?: string[];
+  pocketIds?: number[];
+  tagIds?: number[];
 }
 
 export interface TransactionAccount {
@@ -289,6 +324,8 @@ export interface ManualTransactionInput {
   description: string;
   categoryId?: number | null;
   memo?: string | null;
+  /** For kind = transfer: the pocket the money moved into or out of. */
+  pocketId?: number | null;
 }
 
 export function createManualTransaction(input: ManualTransactionInput) {
@@ -324,7 +361,9 @@ export function updateCategoryColor(id: number, color: string) {
 export type BulkTransactionAction =
   | { type: "category"; categoryId: number | null }
   | { type: "kind"; kind: TransactionKind }
-  | { type: "exclude"; excluded: boolean };
+  | { type: "exclude"; excluded: boolean }
+  | { type: "pocket"; pocketId: number | null }
+  | { type: "tag"; tagId: number; add: boolean };
 
 /** Apply one action to many transactions: explicit ids, or a whole filter. */
 export function bulkUpdateTransactions(
@@ -346,6 +385,91 @@ export function setTransactionKind(id: number, kind: TransactionKind) {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ kind }),
+  });
+}
+
+export function setTransactionPocket(id: number, pocketId: number | null) {
+  return fetchJSON<{ success: boolean }>(`/api/transactions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pocketId }),
+  });
+}
+
+export function setTransactionTags(id: number, tagIds: number[]) {
+  return fetchJSON<{ success: boolean }>(`/api/transactions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tagIds }),
+  });
+}
+
+// --- Pockets ---
+
+export function listPockets(includeArchived = false) {
+  return fetchJSON<Pocket[]>(
+    `/api/pockets${includeArchived ? "?includeArchived=1" : ""}`
+  );
+}
+
+export interface PocketInput {
+  name: string;
+  emoji?: string | null;
+  color: string;
+  type: PocketType;
+  plannedMonthly?: number | null;
+}
+
+export function createPocket(input: PocketInput) {
+  return fetchJSON<Pocket>("/api/pockets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updatePocket(
+  id: number,
+  patch: Partial<PocketInput> & { archived?: boolean }
+) {
+  return fetchJSON<Pocket>(`/api/pockets/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deletePocket(id: number) {
+  return fetchJSON<{ success: boolean }>(`/api/pockets/${id}`, {
+    method: "DELETE",
+  });
+}
+
+// --- Tags ---
+
+export function listTags() {
+  return fetchJSON<Tag[]>("/api/tags");
+}
+
+export function createTag(input: { name: string; color: string }) {
+  return fetchJSON<Tag>("/api/tags", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateTag(id: number, patch: { name?: string; color?: string }) {
+  return fetchJSON<Tag>(`/api/tags/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteTag(id: number) {
+  return fetchJSON<{ success: boolean }>(`/api/tags/${id}`, {
+    method: "DELETE",
   });
 }
 

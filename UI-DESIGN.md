@@ -6,11 +6,12 @@ under "Shipped so far"; everything above that is the plan.
 
 ## Start here (status log, newest first)
 
-- 2026-09-10: plan v2 approved. Phase 0 done: `feature/transaction-interface`
-  merged into `main`. Next: phase 1 on `feature/money-model` (migration
-  027, flow fragment, cycle helper, pockets and tags settings). Open
-  questions below still need the owner's answers; phase 1 starts with the
-  parts that do not depend on them.
+- 2026-09-10: plan v2 approved, decisions recorded (see Decisions).
+  Phase 0 done: `feature/transaction-interface` merged into `main`.
+  Phase 1 in progress on `feature/money-model`: migration 027 (pockets,
+  `pocket_id`, tags), flow fragment, cycle helper, pockets and tags
+  settings, pocket and tag actions in the row menu and bulk bar, flow
+  based KPI cards. Splits deferred.
 
 ## Vision, in the owner's words
 
@@ -340,6 +341,26 @@ ROADMAP) go straight onto `main` or ride with the phase they describe.
 
 Each phase ships on its own and leaves `main` usable.
 
+## Decisions (2026-09-10)
+
+- **Calendar months** are the period everywhere. `payday_day` only
+  drives the pace indicator. The cycle helper still exists so a salary
+  cycle can be switched on later without touching queries.
+- **Cash is itemized.** Every workspace gets a seeded Cash pocket; ATM
+  withdrawals are meant to be moved into it (manually or by rule) and
+  manual cash entries are the spending. Nothing is forced: an untouched
+  withdrawal still counts as spending.
+- **Seeded pockets**: Cash, Savings, Investments. The owner invests both
+  through the bank and through Interactive Israel; both land in the
+  Investments pocket (per-pocket granularity can be added by creating
+  more pockets). No Loan pocket is seeded.
+- **Loans are designed blind.** The owner has none; a sibling's
+  workspace will be the first real loan data. The loan pocket type and
+  `planned_monthly` ship generic; splits (principal vs interest) and any
+  bank-specific detection wait until real repayment lines are seen.
+- **Tags ship in phase 1** alongside pockets since both are schema work
+  and both feed the transactions view.
+
 ## Open questions
 
 - Sankey vs stacked flow for "where the money went": prototype both on
@@ -347,8 +368,8 @@ Each phase ships on its own and leaves `main` usable.
   card width.
 - Should a loan pocket carry an opening balance so the dashboard can
   show remaining debt? Flow-only for now; balances need reconciliation.
-- Automatic principal/interest split from bank data: research per bank
-  after phase 1.
+- Splits and automatic principal/interest detection: wait for real loan
+  data (see Decisions).
 - Multi-currency display: out of scope, unchanged from ROADMAP.
 
 ## Shipped so far (v1 summary, 2026-09-05)

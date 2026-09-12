@@ -165,6 +165,8 @@ function CredentialsForm({
 
   // Adjust state when the target credential changes; a guarded update
   // during render instead of an effect avoids a wasted extra render pass.
+  // Password fields the server holds a value for; blank means "keep it".
+  const [storedSecrets, setStoredSecrets] = useState<string[]>([]);
   const [prevCredentialId, setPrevCredentialId] = useState(credentialId);
   if (prevCredentialId !== credentialId) {
     setPrevCredentialId(credentialId);
@@ -179,6 +181,7 @@ function CredentialsForm({
         const res = await getIntegrationCredentials(credentialId);
         if (cancelled) return;
         if (res.credentials) setCredentials(res.credentials);
+        setStoredSecrets(res.storedSecrets ?? []);
         if (res.label) setLabel(res.label);
         setRequiresManualTwoFactor(res.requiresManualTwoFactor);
         setHasTwoFactorToken(res.hasTwoFactorToken);
@@ -195,7 +198,7 @@ function CredentialsForm({
     label.trim().length > 0 &&
     info.credentialFields.every((f) => {
       const v = credentials[f.key]?.trim() ?? "";
-      if (!v) return false;
+      if (!v) return storedSecrets.includes(f.key);
       if (f.exactLength != null && v.length !== f.exactLength) return false;
       return true;
     });
@@ -322,7 +325,9 @@ function CredentialsForm({
           field.exactLength != null &&
           value.length > 0 &&
           value.length !== field.exactLength;
-        const placeholder = field.placeholder ?? field.label;
+        const placeholder = storedSecrets.includes(field.key)
+          ? "Saved. Leave blank to keep the current one."
+          : (field.placeholder ?? field.label);
         const hint = field.hint;
         return (
           <div key={field.key} className="space-y-1.5">

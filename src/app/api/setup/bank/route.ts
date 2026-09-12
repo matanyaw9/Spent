@@ -5,7 +5,7 @@ import {
   getBankCredentialMeta,
   saveBankCredentials,
 } from "@/server/db/queries/bank-credentials";
-import { BANK_PROVIDERS } from "@/lib/types";
+import { secretCredentialKeys } from "@/lib/credential-secrets";
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
 
 export async function POST(request: Request) {
@@ -25,9 +25,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const info = BANK_PROVIDERS.find((b) => b.id === body.provider);
-  const passwordKeys =
-    info?.credentialFields.filter((f) => f.type === "password").map((f) => f.key) ?? [];
+  // Blank password fields on an update mean "keep the stored one": the edit
+  // form never receives passwords (see GET /api/integrations/[id]).
+  const passwordKeys = secretCredentialKeys(body.provider);
 
   const credentialId = body.credentialId;
   const existing =

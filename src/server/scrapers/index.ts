@@ -4,6 +4,7 @@ import { CompanyTypes, createScraper } from "israeli-bank-scrapers";
 import type { ScrapeResult, ScrapedTransaction } from "./types";
 import type { BankProvider } from "@/lib/types";
 import { getWorkspaceSetting } from "../db/queries/settings";
+import { sanitizeError } from "../lib/sanitize-error";
 
 export const PROVIDER_MAP: Record<string, CompanyTypes> = {
   isracard: CompanyTypes.isracard,
@@ -25,26 +26,6 @@ export const PROVIDER_MAP: Record<string, CompanyTypes> = {
   behatsdaa: CompanyTypes.behatsdaa,
   oneZero: CompanyTypes.oneZero,
 };
-
-function sanitizeError(error: unknown): string {
-  if (!(error instanceof Error)) {
-    return "An unknown error occurred during scraping";
-  }
-  let msg = error.message;
-  // Strip 5+ digit numbers (likely ID numbers, card digits, etc.)
-  msg = msg.replace(/\b\d{5,}\b/g, "[REDACTED]");
-  // Strip password and id values from JSON-like blobs.
-  // Match a key followed by quoted string OR unquoted value, non-greedy.
-  msg = msg.replace(
-    /"(password|id|card6Digits|cardSuffix)"\s*:\s*"[^"]*"/gi,
-    '"$1":"[REDACTED]"'
-  );
-  msg = msg.replace(
-    /\b(password|id|card6Digits|cardSuffix)\s*=\s*\S+/gi,
-    "$1=[REDACTED]"
-  );
-  return msg;
-}
 
 /**
  * Detect transient errors we should retry, or surface with friendlier copy.
@@ -159,9 +140,10 @@ async function runScrape(
     startDate,
     combineInstallments: false,
     showBrowser,
-    // Verbose logs include URLs and posted payloads (incl. credentials).
-    // Only enable when the user is also showing the browser (= they're debugging).
-    verbose: showBrowser,
+    // Verbose logs include URLs and posted payloads (incl. credentials), and
+    // the background service writes stdout to disk. Opt in per run, never
+    // by default.
+    verbose: process.env.SPENT_SCRAPER_VERBOSE === "1",
     timeout: 60000,
     args: chromiumArgs,
   });
@@ -173,11 +155,11 @@ async function runScrape(
 
   if (!result.success) {
     const errorType = result.errorType ?? "GENERIC";
-    console.error(`[scraper] failed (${errorType}):`, result.errorMessage);
     const friendly = FRIENDLY_ERRORS[errorType];
     const detail = result.errorMessage
-      ? sanitizeError(new Error(result.errorMessage))
+      ? sanitizeError(result.errorMessage)
       : errorType;
+    console.error(`[scraper] failed (${errorType}):`, detail);
     return {
       success: false,
       accounts: [],

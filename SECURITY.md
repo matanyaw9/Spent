@@ -38,7 +38,9 @@ local network or the internet. The app only contacts:
 
 - Your bank's domains (e.g., `digital.isracard.co.il`): via Puppeteer
 - `api.anthropic.com`: only if Claude is your AI provider
-- `localhost:11434`: only if Ollama is your AI provider
+- The Ollama URL you configured (default `http://localhost:11434`): only
+  if Ollama is your AI provider. The server reduces it to a bare `http(s)`
+  origin and refuses redirects, so it cannot be steered anywhere else.
 
 Bank logos are bundled in `public/banks/` and fonts are self-hosted via
 `next/font`, so the browser never talks to Google or any other third
@@ -66,13 +68,40 @@ In those cases set `SPENT_DISABLE_CHROMIUM_SANDBOX=1` in your environment.
 Prefer running as a non-root user instead when you can — that keeps the
 sandbox on.
 
-## CSRF defense
+## Host allowlist and CSRF defense
 
-Next.js middleware (`src/middleware.ts`) rejects any mutating API
-request (POST/PUT/PATCH/DELETE) whose `Origin` or `Referer` header
-doesn't match the app's own host. This prevents a malicious tab in
-your browser from triggering syncs / category changes against your
-localhost.
+Both live in `src/proxy.ts` (the Next.js proxy, formerly "middleware")
+and are pinned by `src/proxy.test.ts`.
+
+**Host allowlist, every request.** A malicious page can load from
+`evil.com`, then re-point that name at `127.0.0.1` (DNS rebinding). The
+browser now treats `evil.com:41234` as the page's own origin and lets its
+scripts read our API responses. What the page cannot forge is the `Host`
+header, so the proxy rejects any request whose `Host` is not `localhost`,
+`spent.localhost`, `127.0.0.1`, or `[::1]`. This applies to pages and
+static assets as well as `/api/`, because pages server-render data too.
+
+**Same-origin check, mutating API requests.** Any webpage can fire a POST
+at `http://127.0.0.1:41234/api/sync` from inside your browser. The proxy
+rejects any POST/PUT/PATCH/DELETE to `/api/` whose `Origin` (or
+`Referer`, when `Origin` is absent) doesn't match our own `Host`, so a
+malicious tab can't trigger syncs, delete integrations, or apply
+categorizations. Anything that starts a process or makes a server-side
+request to a caller-supplied URL (the Ollama routes) is a POST for this
+reason.
+
+## Stored secrets never leave the server
+
+No API response contains a bank password or the Claude API key. The edit
+form for a bank connection receives the non-secret fields plus a
+`storedSecrets` list naming which password fields hold a value; leaving
+such a field blank on save keeps the stored one.
+
+`src/app/api/no-secrets-in-get.test.ts` enforces this: it seeds a
+database with canary secrets, calls every `GET` route under
+`src/app/api/`, and fails if any response body (or thrown error)
+contains a canary. A new route that leaks fails the test suite, not a
+code review.
 
 ## Browser security headers
 
@@ -185,9 +214,12 @@ bundle with a different Info.plist.
 
 **Logs do not leak credentials.** macOS LaunchAgent stdout/stderr go to
 `~/Library/Logs/Spent/{out,err}.log` (directory mode `0700`). Linux
-systemd writes to `~/.local/state/spent/log/`. The app itself already
-avoids logging credentials (see "What's protected at rest" above);
-the always-on service does not change that.
+systemd writes to `~/.local/state/spent/log/`. Every scraper error passes
+through `src/server/lib/sanitize-error.ts` before it is logged or
+returned, which strips password-like values and long digit runs. The
+scraper library's verbose mode logs request payloads, credentials
+included, so it stays off unless you set `SPENT_SCRAPER_VERBOSE=1` for a
+single debugging run.
 
 **The encryption key file's permissions are now asserted at startup.**
 `src/server/lib/encryption.ts` reads `data/.encryption-key` and refuses
@@ -199,11 +231,10 @@ the server will fail loudly with the fix command.
 
 - A local attacker who can already run code as your user. They can read
   the DB and key file with or without the service running.
-- A malicious browser tab on your machine doing a CSRF against
-  `127.0.0.1:41234`. The same-origin middleware in
-  `src/middleware.ts` already blocks this on every mutating request,
-  and that protection works the same whether the server runs on demand
-  or always-on.
+- Nothing new from the browser side. `src/proxy.ts` applies the same
+  Host allowlist and same-origin checks whether the server runs on
+  demand or always-on. Being always-on only widens the window in which a
+  bug there would matter, which is why those checks have their own tests.
 
 ## Reporting a security issue
 

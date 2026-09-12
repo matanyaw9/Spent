@@ -482,7 +482,10 @@ export function deleteIntegration(credentialId: number) {
 
 export function getIntegrationCredentials(credentialId: number) {
   return fetchJSON<{
+    /** Non-secret fields only. Passwords never leave the server. */
     credentials: Record<string, string> | null;
+    /** Password fields that hold a value; leave blank on save to keep them. */
+    storedSecrets: string[];
     label: string | null;
     provider: string | null;
     requiresManualTwoFactor: boolean;
@@ -646,10 +649,16 @@ export interface PullEvent {
   data: PullProgress & { message?: string };
 }
 
+// POST: the server may start `ollama serve` and contacts the given URL,
+// so this sits behind the same-origin check that only mutating calls get.
 export function listOllamaModels(url?: string) {
-  const qs = url ? `?url=${encodeURIComponent(url)}` : "";
   return fetchJSON<{ models: string[]; error?: string }>(
-    `/api/ai/ollama/models${qs}`
+    "/api/ai/ollama/models",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    }
   );
 }
 

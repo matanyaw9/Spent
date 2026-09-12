@@ -8,6 +8,7 @@ import {
   updateCredentialField,
 } from "@/server/db/queries/bank-credentials";
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
+import { redactCredentials } from "@/lib/credential-secrets";
 
 function parseCredentialId(id: string): number | null {
   const credentialId = Number(id);
@@ -30,6 +31,7 @@ export async function GET(
   if (!meta) {
     return NextResponse.json({
       credentials: null,
+      storedSecrets: [],
       label: null,
       provider: null,
       requiresManualTwoFactor: false,
@@ -41,6 +43,7 @@ export async function GET(
   if (!credentials) {
     return NextResponse.json({
       credentials: null,
+      storedSecrets: [],
       label: meta.label,
       provider: meta.provider,
       requiresManualTwoFactor: false,
@@ -48,10 +51,14 @@ export async function GET(
     });
   }
 
-  const { otpLongTermToken, ...userFacing } = credentials;
+  // Passwords never leave the server. The edit form only needs to know a
+  // secret is stored so it can treat a blank field as "keep the current one".
+  const { otpLongTermToken, ...rest } = credentials;
+  const { visible, storedSecrets } = redactCredentials(meta.provider, rest);
 
   return NextResponse.json({
-    credentials: userFacing,
+    credentials: visible,
+    storedSecrets,
     label: meta.label,
     provider: meta.provider,
     requiresManualTwoFactor: getRequiresManualTwoFactor(

@@ -29,6 +29,26 @@ Key priorities (in order):
 - Comments only where the "why" isn't obvious.
 - `import "server-only"` at the top of every file in `src/server/`.
 
+## Security invariants
+
+These hold on every change. Each has a test; do not weaken either.
+
+- `src/proxy.ts` rejects any request whose `Host` is not a loopback name
+  (`localhost`, `spent.localhost`, `127.0.0.1`, `[::1]`) and any mutating
+  `/api/` request whose `Origin`/`Referer` isn't our own host. Pinned by
+  `src/proxy.test.ts`.
+- No API response ever contains a stored bank password or the Claude API
+  key. `GET /api/integrations/[id]` returns non-secret fields plus a
+  `storedSecrets` list; blank on save means keep. Pinned by
+  `src/app/api/no-secrets-in-get.test.ts`, which calls every GET route
+  against canary secrets.
+- Anything that starts a process or makes a server-side request to a
+  caller-supplied URL is a POST, and the URL goes through
+  `normalizeOllamaUrl` (bare http(s) origin, no redirects).
+- Scraper errors go through `src/server/lib/sanitize-error.ts` before they
+  are logged or returned. Scraper `verbose` mode stays off unless
+  `SPENT_SCRAPER_VERBOSE=1`.
+
 ## Architecture
 
 ### Data flow

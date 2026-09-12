@@ -3,6 +3,7 @@ import {
   syncWorkspace,
   type WorkspaceSummary,
 } from "@/server/sync/orchestrator";
+import { sanitizeError } from "@/server/lib/sanitize-error";
 import {
   getWorkspaceIdFromRequest,
   hasWorkspaceHeader,
@@ -97,11 +98,8 @@ export async function POST(request: Request) {
           });
         }
       } catch (error) {
-        console.error("[sync] unexpected error in sync route:", error);
-        const message =
-          error instanceof Error
-            ? error.message.replace(/\b\d{5,}\b/g, "[REDACTED]")
-            : "An unexpected error occurred";
+        const message = sanitizeError(error);
+        console.error("[sync] unexpected error in sync route:", message);
         send("error", { message });
       } finally {
         if (headerPathTracking) markSyncEnd();

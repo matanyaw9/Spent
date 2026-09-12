@@ -4,7 +4,12 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 
-const KEY_PATH = path.join(process.cwd(), "data", ".encryption-key");
+// Same resolution as src/server/db/index.ts so the key always sits beside
+// the database it protects, including under SPENT_DATA_DIR in tests.
+const DATA_DIR = process.env.SPENT_DATA_DIR
+  ? path.resolve(process.env.SPENT_DATA_DIR)
+  : path.join(process.cwd(), "data");
+const KEY_PATH = path.join(DATA_DIR, ".encryption-key");
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 

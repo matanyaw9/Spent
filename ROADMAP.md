@@ -56,7 +56,7 @@ family finance dashboard. Base currency NIS. Data comes in via `israeli-bank-scr
    (משיכת שיק + amount 4800 → rent). Schema groundwork exists
    (`excluded_merchants` is a primitive rule table).
 4. **Small cleanups**: `timeZone: "Asia/Jerusalem"` for next-intl,
-   middleware → proxy rename, replace Google favicon fetch with local bank PNGs
+   replace Google favicon fetch with local bank PNGs
    (privacy), fix duplicate migration number 020.
 5. **Cycle reconciliation (the verifier)**: per billing cycle, check
    sum(card transactions) == bank charge; surface discrepancies.

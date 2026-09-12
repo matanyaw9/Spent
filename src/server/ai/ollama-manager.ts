@@ -7,9 +7,44 @@ declare global {
   var _ollamaExitHandlerRegistered: boolean | undefined;
 }
 
-async function isReachable(url: string, timeoutMs = 1500): Promise<boolean> {
+export const DEFAULT_OLLAMA_URL = "http://localhost:11434";
+export const INVALID_OLLAMA_URL_MESSAGE =
+  "Invalid Ollama URL. Use the form http://host:11434.";
+
+/**
+ * Reduce a user-supplied Ollama URL to a bare http(s) origin. The value
+ * comes straight from the settings form and becomes a server-side fetch
+ * target, so anything that could steer the request elsewhere (userinfo,
+ * path, query, fragment, other schemes) is dropped or rejected.
+ */
+export function normalizeOllamaUrl(
+  raw: string | null | undefined
+): string | null {
+  if (!raw) return null;
+  let url: URL;
   try {
-    const res = await fetch(`${url}/api/tags`, {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  return url.origin;
+}
+
+// Every outbound call goes through here: normalized origin, fixed path, no
+// redirect following, so a reachable host can't bounce us somewhere else.
+function ollamaFetch(
+  base: string,
+  apiPath: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  return fetch(`${base}${apiPath}`, { ...init, redirect: "error" });
+}
+
+async function isReachable(base: string, timeoutMs = 1500): Promise<boolean> {
+  try {
+    const res = await ollamaFetch(base, "/api/tags", {
       signal: AbortSignal.timeout(timeoutMs),
     });
     return res.ok;
@@ -19,12 +54,12 @@ async function isReachable(url: string, timeoutMs = 1500): Promise<boolean> {
 }
 
 async function waitForReachable(
-  url: string,
+  base: string,
   maxWaitMs: number
 ): Promise<boolean> {
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
-    if (await isReachable(url)) return true;
+    if (await isReachable(base)) return true;
     await new Promise((r) => setTimeout(r, 400));
   }
   return false;
@@ -44,8 +79,10 @@ export interface OllamaPullProgress {
 }
 
 export async function listOllamaModels(url: string): Promise<string[]> {
+  const base = normalizeOllamaUrl(url);
+  if (!base) return [];
   try {
-    const res = await fetch(`${url}/api/tags`, {
+    const res = await ollamaFetch(base, "/api/tags", {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return [];
@@ -68,7 +105,10 @@ export async function* pullOllamaModel(
   url: string,
   model: string
 ): AsyncGenerator<OllamaPullProgress, void, unknown> {
-  const res = await fetch(`${url}/api/pull`, {
+  const base = normalizeOllamaUrl(url);
+  if (!base) throw new Error(INVALID_OLLAMA_URL_MESSAGE);
+
+  const res = await ollamaFetch(base, "/api/pull", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: model, stream: true }),
@@ -114,12 +154,15 @@ export async function* pullOllamaModel(
 export async function ensureOllamaRunning(
   url: string
 ): Promise<OllamaCheckResult> {
-  if (await isReachable(url)) {
+  const base = normalizeOllamaUrl(url);
+  if (!base) return { ok: false, error: INVALID_OLLAMA_URL_MESSAGE };
+
+  if (await isReachable(base)) {
     return { ok: true };
   }
 
   if (globalThis._ollamaProcess && !globalThis._ollamaProcess.killed) {
-    if (await waitForReachable(url, 5000)) {
+    if (await waitForReachable(base, 5000)) {
       return { ok: true, spawned: true };
     }
   }
@@ -169,7 +212,7 @@ export async function ensureOllamaRunning(
       };
     }
 
-    if (await waitForReachable(url, 10000)) {
+    if (await waitForReachable(base, 10000)) {
       console.log("[ollama] up and running");
       return { ok: true, spawned: true };
     }

@@ -2,6 +2,7 @@ import "server-only";
 
 import { getDb } from "../index";
 import type { AppSettings } from "@/lib/types";
+import { CATEGORY_COLOR_PALETTE } from "@/lib/category-palette";
 
 // Global settings live in the `settings` table and apply to every workspace.
 // Currently: ai_provider, ai_ollama_url, ai_ollama_model, plus the encrypted
@@ -70,6 +71,7 @@ export function getAppSettings(workspaceId: number): AppSettings {
   const storedLang = getGlobalSetting("language");
   return {
     monthsToSync: Number(getWorkspaceSetting(workspaceId, "months_to_sync") ?? "3"),
+    categoryPalette: readCategoryPalette(workspaceId),
     aiProvider: (getGlobalSetting("ai_provider") ?? "none") as AppSettings["aiProvider"],
     ollamaUrl: getGlobalSetting("ai_ollama_url") ?? "http://localhost:11434",
     ollamaModel: getGlobalSetting("ai_ollama_model") ?? "llama3.2:3b",
@@ -81,6 +83,41 @@ export function getAppSettings(workspaceId: number): AppSettings {
       storedTime && AUTO_SYNC_TIME_RE.test(storedTime) ? storedTime : "06:00",
     language: storedLang === "he" ? "he" : "en",
   };
+}
+
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const MAX_PALETTE_COLORS = 36;
+
+function parseHexArray(raw: string | null | undefined): string[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .filter((c): c is string => typeof c === "string" && HEX_COLOR_RE.test(c))
+      .slice(0, MAX_PALETTE_COLORS);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The whole swatch palette is user-editable per workspace. Unset falls
+ * back to the built-in colors (plus any colors saved under the older
+ * custom-colors key, so nothing a user picked disappears).
+ */
+function readCategoryPalette(workspaceId: number): string[] {
+  const stored = parseHexArray(
+    getWorkspaceSetting(workspaceId, "category_palette")
+  );
+  if (stored) return stored;
+  const legacyCustom =
+    parseHexArray(getWorkspaceSetting(workspaceId, "custom_category_colors")) ??
+    [];
+  return [...CATEGORY_COLOR_PALETTE, ...legacyCustom].slice(
+    0,
+    MAX_PALETTE_COLORS
+  );
 }
 
 export function updateAppSettings(
@@ -141,6 +178,25 @@ export function updateAppSettings(
         throw new Error("language must be 'en' or 'he'");
       }
       setGlobalSetting("language", settings.language);
+    }
+    if (settings.categoryPalette !== undefined) {
+      if (
+        !Array.isArray(settings.categoryPalette) ||
+        !settings.categoryPalette.every(
+          (c) => typeof c === "string" && HEX_COLOR_RE.test(c)
+        )
+      ) {
+        throw new Error("categoryPalette must be #rrggbb hex strings");
+      }
+      const deduped = [...new Set(settings.categoryPalette)].slice(
+        0,
+        MAX_PALETTE_COLORS
+      );
+      setWorkspaceSetting(
+        workspaceId,
+        "category_palette",
+        JSON.stringify(deduped)
+      );
     }
   });
   update();

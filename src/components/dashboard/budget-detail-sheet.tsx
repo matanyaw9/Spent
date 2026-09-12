@@ -1,5 +1,6 @@
 "use client";
 
+import { categoryEmoji } from "@/lib/category-emoji";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -175,6 +176,7 @@ function DetailContent({ data }: { data: CategoryDetail }) {
     invalidate();
   };
 
+  const emoji = categoryEmoji(data.category.icon);
   const Icon = ICON_MAP[data.category.icon ?? "circle-dot"] ?? CircleDot;
   const iconColor = shade(data.category.color);
   const pct = Math.min(100, Math.round(data.percentSpent));
@@ -200,7 +202,11 @@ function DetailContent({ data }: { data: CategoryDetail }) {
           <div
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-background/70"
           >
-            <Icon className="h-5 w-5" style={{ color: iconColor }} />
+            {emoji ? (
+              <span className="text-lg leading-none">{emoji}</span>
+            ) : (
+              <Icon className="h-5 w-5" style={{ color: iconColor }} />
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">

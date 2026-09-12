@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { AlertTriangle, Trash2 } from "lucide-react";
+import { AlertTriangle, Palette, Trash2 } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -34,11 +34,19 @@ import {
 import {
   deleteCategory,
   getCategories,
+  getSettings,
   setCategoryParent,
+  updateCategoryIcon,
   updateBudget,
   updateCategoryBudgetMode,
+  updateCategoryColor,
   updateCategoryDescription,
+  updateSettings,
 } from "@/lib/api";
+import { CATEGORY_COLOR_PALETTE } from "@/lib/category-palette";
+import { categoryEmoji } from "@/lib/category-emoji";
+import { getCategoryDescendantIds } from "@/lib/transaction-filters";
+import { cn } from "@/lib/utils";
 import type { Category, CategoryWithData } from "@/lib/types";
 
 const NONE_VALUE = "__none__";
@@ -104,8 +112,13 @@ function Body({
   const sameKind = allCategories.filter(
     (c) => c.kind === category.kind && c.id !== category.id
   );
+  // Any category can be a parent, at any depth; only this category's own
+  // subtree is off-limits (that would make a cycle).
+  const descendantIds = new Set(
+    getCategoryDescendantIds(category.id, allCategories)
+  );
   const eligibleParents = sameKind
-    .filter((c) => c.parentId == null)
+    .filter((c) => !descendantIds.has(c.id))
     .sort((a, b) => a.name.localeCompare(b.name));
   const childCategories = useMemo(
     () =>
@@ -154,6 +167,10 @@ function Body({
           category={category}
           eligibleParents={eligibleParents}
         />
+
+        <IconSection category={category} />
+
+        <ColorSection category={category} />
 
         <DescriptionSection category={category} />
 
@@ -425,12 +442,8 @@ function GroupSection({
       const reason = err.message;
       if (reason === "kind-mismatch") {
         toast.error("Parent must be the same kind (expense or income).");
-      } else if (reason === "not-leaf-target") {
-        toast.error("Parent must be a top-level category.");
-      } else if (reason === "child-has-children") {
-        toast.error(
-          "Can't move a category that already has sub-categories under it."
-        );
+      } else if (reason === "cycle") {
+        toast.error("That would make a category its own ancestor.");
       } else {
         toast.error("Couldn't update parent.");
       }
@@ -475,6 +488,226 @@ function GroupSection({
         </Select>
         <p className="text-[11px] text-muted-foreground">
           Use a parent group to roll spending up. Most users keep the defaults.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function IconSection({ category }: { category: Category }) {
+  const queryClient = useQueryClient();
+  const savedEmoji = categoryEmoji(category.icon) ?? "";
+  const [value, setValue] = useState(savedEmoji);
+  // Reset when the saved icon changes (guarded update during render).
+  const [prevIcon, setPrevIcon] = useState(category.icon);
+  if (prevIcon !== category.icon) {
+    setPrevIcon(category.icon);
+    setValue(categoryEmoji(category.icon) ?? "");
+  }
+
+  const mutation = useMutation({
+    mutationFn: (icon: string | null) => updateCategoryIcon(category.id, icon),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Couldn't update the icon");
+    },
+  });
+
+  const commit = () => {
+    const trimmed = value.trim();
+    if (trimmed === savedEmoji) return;
+    mutation.mutate(trimmed || null);
+  };
+
+  return (
+    <section>
+      <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        Icon
+      </div>
+      <div className="mt-3 rounded-xl border border-border bg-card p-4">
+        <div className="flex items-center gap-3">
+          <Input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+            placeholder="🙂"
+            maxLength={12}
+            className="h-9 w-20 text-center text-lg"
+            aria-label="Category emoji"
+          />
+          {savedEmoji && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground"
+              onClick={() => {
+                setValue("");
+                mutation.mutate(null);
+              }}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Optional emoji shown next to the name everywhere. Open your
+          system&apos;s emoji picker with Win+. or Ctrl+Cmd+Space.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function ColorSection({ category }: { category: Category }) {
+  const queryClient = useQueryClient();
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => getSettings(),
+  });
+  const palette = settingsQuery.data?.categoryPalette ?? [
+    ...CATEGORY_COLOR_PALETTE,
+  ];
+  const [pendingNew, setPendingNew] = useState<string | null>(null);
+  const [editState, setEditState] = useState<{
+    index: number;
+    value: string;
+  } | null>(null);
+
+  const applyMutation = useMutation({
+    mutationFn: (color: string) => updateCategoryColor(category.id, color),
+    onSuccess: () => {
+      // No toast: the swatch ring and every badge recolor immediately.
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
+      queryClient.invalidateQueries({ queryKey: ["summary"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Couldn't update the color");
+    },
+  });
+
+  const paletteMutation = useMutation({
+    mutationFn: (colors: string[]) =>
+      updateSettings({ categoryPalette: colors }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Couldn't save the palette");
+    },
+  });
+
+  // New colors and edits commit when the native picker closes (blur), not
+  // on every drag tick inside the color dialog.
+  const commitNewColor = () => {
+    if (!pendingNew) return;
+    const color = pendingNew;
+    setPendingNew(null);
+    applyMutation.mutate(color);
+    if (!palette.some((c) => c.toLowerCase() === color.toLowerCase())) {
+      paletteMutation.mutate([...palette, color]);
+    }
+  };
+
+  const commitEdit = () => {
+    if (!editState) return;
+    const { index, value } = editState;
+    setEditState(null);
+    const previous = palette[index];
+    if (!previous || previous.toLowerCase() === value.toLowerCase()) return;
+    const next = [...palette];
+    next[index] = value;
+    paletteMutation.mutate(next);
+    // Editing a swatch recolors this category too when it was using it.
+    if (category.color.toLowerCase() === previous.toLowerCase()) {
+      applyMutation.mutate(value);
+    }
+  };
+
+  const removeColor = (index: number) => {
+    paletteMutation.mutate(palette.filter((_, i) => i !== index));
+  };
+
+  return (
+    <section>
+      <div className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+        Color
+      </div>
+      <div className="mt-3 rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {palette.map((color, index) => (
+            <span key={`${color}-${index}`} className="group relative inline-flex">
+              <button
+                type="button"
+                disabled={applyMutation.isPending}
+                onClick={() => applyMutation.mutate(color)}
+                aria-label={`Use ${color}`}
+                className={cn(
+                  "h-7 w-7 rounded-full border transition-transform hover:scale-110",
+                  category.color.toLowerCase() === color.toLowerCase()
+                    ? "border-foreground ring-2 ring-foreground/30"
+                    : "border-border"
+                )}
+                style={{
+                  backgroundColor:
+                    editState?.index === index ? editState.value : color,
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => removeColor(index)}
+                aria-label={`Remove ${color} from palette`}
+                title="Remove from palette"
+                className="absolute -end-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-destructive group-hover:flex"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+              </button>
+              <label
+                aria-label={`Edit ${color}`}
+                title="Edit this color"
+                className="absolute -bottom-1.5 -end-1.5 hidden h-4 w-4 cursor-pointer items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground group-hover:flex"
+              >
+                <Palette className="h-2.5 w-2.5" />
+                <input
+                  type="color"
+                  value={editState?.index === index ? editState.value : color}
+                  onChange={(e) =>
+                    setEditState({ index, value: e.target.value })
+                  }
+                  onBlur={commitEdit}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                />
+              </label>
+            </span>
+          ))}
+          <label
+            title="Add a color to the palette"
+            className="relative flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-dashed border-border text-muted-foreground transition-colors hover:text-foreground"
+            style={pendingNew ? { backgroundColor: pendingNew } : undefined}
+          >
+            <Palette className="h-3.5 w-3.5" />
+            <input
+              type="color"
+              value={pendingNew ?? category.color}
+              onChange={(e) => setPendingNew(e.target.value)}
+              onBlur={commitNewColor}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            />
+          </label>
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Click a swatch to use it. Hover one to edit or remove it from the
+          palette; the dashed circle adds a new color.
         </p>
       </div>
     </section>

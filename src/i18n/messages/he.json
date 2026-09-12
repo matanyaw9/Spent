@@ -210,13 +210,44 @@
     "chipTransfer": "העברה",
     "chipExcludedTooltip": "לא נספר בסיכומים. לחיצה תחזיר אותו לחישוב.",
     "chipTransferTooltip": "כסף שעבר בין החשבונות שלך; לא נספר כהכנסה או כהוצאה. אפשר לשנות מתפריט השורה.",
-    "notCountedSummary": "{count, plural, one {תנועה אחת לא נספרת} other {# תנועות לא נספרות}} ({amount})",
-    "notCountedBreakdown": "{excluded} מוחרגות · {transfers} העברות",
-    "notCountedShow": "הצגת אלה בלבד",
-    "notCountedShowAll": "הצגת כל הפעילות",
     "kpiIncomeHint": "תנועות המסומנות כהכנסה. תנועות מוחרגות והעברות אינן נספרות.",
     "kpiExpensesHint": "תנועות המסומנות כהוצאה. תנועות מוחרגות והעברות אינן נספרות.",
-    "kpiNetHint": "הכנסות פחות הוצאות. תנועות מוחרגות והעברות אינן נספרות."
+    "kpiNetHint": "הכנסות פחות הוצאות. תנועות מוחרגות והעברות אינן נספרות.",
+    "filterNotCountedLabel": "לא נספרות (העברות ומוחרגות)",
+    "filterNotCountedHidden": "מוסתרות",
+    "filterNotCountedAll": "הצגת הכול",
+    "filterNotCountedOnly": "רק אלה",
+    "filterNotCountedHint": "העברות הן בדרך כלל שורת החיוב של הבנק שמכפילה את הוצאות הכרטיס, ולכן הן מוסתרות כברירת מחדל.",
+    "filterDateFrom": "מתאריך",
+    "filterDateTo": "עד",
+    "noteAdd": "הוספת הערה",
+    "noteEdit": "עריכת הערה",
+    "noteRemove": "מחיקת הערה",
+    "noteSave": "שמירת הערה",
+    "notePlaceholder": "כל דבר ששווה לזכור על התנועה הזאת",
+    "filterAmountMin": "מינימום",
+    "filterAmountMax": "מקסימום",
+    "filterCardLabel": "כרטיס / חשבון",
+    "filterClearAll": "ניקוי סינון",
+    "categorySearchPlaceholder": "חיפוש או יצירה...",
+    "categorySearchEmpty": "אין קטגוריות תואמות.",
+    "categoryCreate": "יצירת \"{name}\"",
+    "categoryCreateInKind": "יצירת \"{name}\" תחת {kind}",
+    "addTransaction": "הוספה",
+    "addTransactionTitle": "הוספת תנועה",
+    "addTransactionHint": "רישום של מה שהבנקים לא רואים, כמו מזומן.",
+    "addTransactionDate": "תאריך",
+    "addTransactionAmount": "סכום (₪)",
+    "addTransactionDescription": "תיאור",
+    "addTransactionDescriptionPlaceholder": "למשל: פלאפל, מזומן",
+    "addTransactionPickCategory": "בחירת קטגוריה",
+    "addTransactionMemo": "הערה (לא חובה)",
+    "addTransactionMemoPlaceholder": "כל דבר ששווה לזכור",
+    "addTransactionCancel": "ביטול",
+    "addTransactionSave": "הוספת תנועה",
+    "addTransactionToast": "התנועה נוספה",
+    "deleteEntry": "מחיקת רישום",
+    "deleteEntryToast": "הרישום נמחק"
   },
   "dashboard": {
     "syncing": "מסנכרן…",
@@ -296,6 +327,16 @@
     "ofBudget": "מתוך {amount}"
   },
   "settings": {
+    "cards": {
+      "title": "כרטיסי אשראי",
+      "description": "כרטיסים שהסנכרונים זיהו. כינוי יוצג בתנועות במקום שם הספק.",
+      "nicknamePlaceholder": "כינוי",
+      "typeUnset": "סוג לא הוגדר",
+      "typeCredit": "אשראי",
+      "typeDebit": "חיוב מיידי",
+      "typePrepaid": "נטען",
+      "billingDay": "יום חיוב"
+    },
     "pageTitle": "הגדרות",
     "sidebar": {
       "title": "הגדרות",
@@ -659,6 +700,9 @@
     "Fees & Taxes": "עמלות ומסים"
   },
   "banks": {
+    "manual": {
+      "name": "ידני"
+    },
     "isracard": {
       "name": "ישראכרט",
       "blurb": "מאסטרקארד / ויזה ישראלי"

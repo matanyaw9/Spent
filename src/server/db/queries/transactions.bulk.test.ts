@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
+import { computeDedupHash } from "../../lib/dedup";
 
 // These tests run the real migrations against a throwaway database, then
 // exercise the bulk mutations and filter resolution end to end. The data
@@ -21,9 +22,11 @@ let seq = 0;
 interface SeedTxn {
   amount: number;
   kind: "expense" | "income" | "transfer";
+  kindSource?: "auto" | "user";
   excluded?: boolean;
   description?: string;
   date?: string;
+  accountNumber?: string;
 }
 
 function insertTxn(t: SeedTxn): number {
@@ -35,12 +38,13 @@ function insertTxn(t: SeedTxn): number {
          workspace_id, account_number, date, processed_date,
          original_amount, original_currency, charged_amount, description,
          type, status, provider, sync_run_id, dedup_hash, dedup_sequence,
-         kind, is_excluded
-       ) VALUES (?, '1234', ?, ?, ?, 'ILS', ?, ?, 'normal', 'completed',
-                 'isracard', 1, ?, 0, ?, ?)`
+         kind, kind_source, is_excluded
+       ) VALUES (?, ?, ?, ?, ?, 'ILS', ?, ?, 'normal', 'completed',
+                 'isracard', 1, ?, 0, ?, ?, ?)`
     )
     .run(
       WS,
+      t.accountNumber ?? "1234",
       date,
       date,
       t.amount,
@@ -48,6 +52,7 @@ function insertTxn(t: SeedTxn): number {
       t.description ?? `merchant-${seq}`,
       `hash-${seq}`,
       t.kind,
+      t.kindSource ?? "auto",
       t.excluded ? 1 : 0
     );
   return Number(result.lastInsertRowid);
@@ -80,6 +85,10 @@ beforeAll(async () => {
   db.prepare(
     `INSERT INTO sync_runs (id, workspace_id, provider, started_at, status, scrape_from_date)
      VALUES (1, 1, 'isracard', datetime('now'), 'completed', '2026-01-01')`
+  ).run();
+  db.prepare(
+    `INSERT INTO bank_credentials (id, workspace_id, provider, credentials_encrypted, iv, auth_tag)
+     VALUES (1, 1, 'discount', x'00', x'00', x'00')`
   ).run();
 
   const categories = db
@@ -200,7 +209,7 @@ describe("resolveFilteredTransactionIds", () => {
     expect(expenseIds).toContain(refund);
   });
 
-  it("notCounted returns exactly the excluded and transfer rows", () => {
+  it("notCounted 'only' returns excluded rows and user transfers", () => {
     const counted = insertTxn({
       amount: -70,
       kind: "expense",
@@ -215,16 +224,409 @@ describe("resolveFilteredTransactionIds", () => {
     const transfer = insertTxn({
       amount: -90,
       kind: "transfer",
+      kindSource: "user",
       date: "2029-05-14",
     });
 
     const ids = queries.resolveFilteredTransactionIds(WS, {
       ...range,
-      notCounted: true,
+      notCounted: "only",
     });
     expect(ids).toContain(excluded);
     expect(ids).toContain(transfer);
     expect(ids).not.toContain(counted);
+
+    const hidden = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      notCounted: "hidden",
+    });
+    expect(hidden).toContain(counted);
+    expect(hidden).not.toContain(excluded);
+    expect(hidden).not.toContain(transfer);
+  });
+});
+
+describe("advanced list filters", () => {
+  const range = { from: "2031-03-01", to: "2031-03-31" };
+
+  it("not-counted visibility handles user transfers; duplicates never list", () => {
+    const kept = insertTxn({ amount: -10, kind: "expense", date: "2031-03-05" });
+    const excluded = insertTxn({
+      amount: -20,
+      kind: "expense",
+      excluded: true,
+      date: "2031-03-06",
+    });
+    const userTransfer = insertTxn({
+      amount: -500,
+      kind: "transfer",
+      kindSource: "user",
+      date: "2031-03-07",
+    });
+    const duplicate = insertTxn({
+      amount: -900,
+      kind: "transfer",
+      kindSource: "auto",
+      date: "2031-03-08",
+    });
+
+    const hidden = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      notCounted: "hidden",
+    });
+    expect(hidden).toContain(kept);
+    expect(hidden).not.toContain(excluded);
+    expect(hidden).not.toContain(userTransfer);
+    expect(hidden).not.toContain(duplicate);
+
+    const only = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      notCounted: "only",
+    });
+    expect(only).toEqual([excluded, userTransfer]);
+
+    // Even "show all" never surfaces the auto-detected billing duplicate.
+    const all = queries.resolveFilteredTransactionIds(WS, { ...range });
+    expect(all).toContain(userTransfer);
+    expect(all).not.toContain(duplicate);
+  });
+
+  it("amount bounds apply to the magnitude, not the sign", () => {
+    const small = insertTxn({ amount: -50, kind: "expense", date: "2031-03-10" });
+    const large = insertTxn({ amount: -900, kind: "expense", date: "2031-03-11" });
+    const bigIncome = insertTxn({
+      amount: 800,
+      kind: "income",
+      date: "2031-03-12",
+    });
+
+    const ids = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      amountMin: 100,
+      amountMax: 1000,
+    });
+    expect(ids).toContain(large);
+    expect(ids).toContain(bigIncome);
+    expect(ids).not.toContain(small);
+  });
+
+  it("filters by card/account number", () => {
+    const cardA = insertTxn({
+      amount: -30,
+      kind: "expense",
+      date: "2031-03-15",
+      accountNumber: "9999",
+    });
+    const cardB = insertTxn({
+      amount: -40,
+      kind: "expense",
+      date: "2031-03-16",
+      accountNumber: "8888",
+    });
+
+    const ids = queries.resolveFilteredTransactionIds(WS, {
+      ...range,
+      accountNumbers: ["9999"],
+    });
+    expect(ids).toContain(cardA);
+    expect(ids).not.toContain(cardB);
+
+    const accounts = queries.listTransactionAccounts(WS);
+    expect(accounts.map((a) => a.accountNumber)).toContain("9999");
+  });
+});
+
+describe("manual transactions", () => {
+  it("creates a signed row with user-owned metadata", () => {
+    const expenseId = queries.createManualTransaction(WS, {
+      date: "2031-06-01",
+      amount: 55.5,
+      kind: "expense",
+      description: "falafel, cash",
+      categoryId: expenseCategoryId,
+      memo: "lunch",
+    });
+    const incomeId = queries.createManualTransaction(WS, {
+      date: "2031-06-02",
+      amount: 200,
+      kind: "income",
+      description: "sold a chair",
+    });
+
+    const expense = db
+      .prepare(
+        `SELECT provider, account_number, charged_amount, kind, kind_source,
+                category_id, category_source, sync_run_id, memo
+         FROM transactions WHERE id = ?`
+      )
+      .get(expenseId) as Record<string, unknown>;
+    const income = db
+      .prepare(
+        `SELECT charged_amount, category_id, category_source, sync_run_id
+         FROM transactions WHERE id = ?`
+      )
+      .get(incomeId) as Record<string, unknown>;
+
+    expect(expense).toMatchObject({
+      provider: "manual",
+      account_number: "cash",
+      charged_amount: -55.5,
+      kind: "expense",
+      kind_source: "user",
+      category_id: expenseCategoryId,
+      category_source: "user",
+      memo: "lunch",
+    });
+    expect(income.charged_amount).toBe(200);
+    expect(income.category_id).toBeNull();
+    expect(income.category_source).toBeNull();
+    // Both hang off the same synthetic per-workspace sync run.
+    expect(income.sync_run_id).toBe(expense.sync_run_id);
+  });
+
+  it("deletes manual rows only", () => {
+    const manualId = queries.createManualTransaction(WS, {
+      date: "2031-06-03",
+      amount: 10,
+      kind: "expense",
+      description: "bus fare",
+    });
+    const syncedId = insertTxn({ amount: -10, kind: "expense" });
+
+    expect(queries.deleteManualTransaction(WS, manualId)).toBe(true);
+    expect(queries.deleteManualTransaction(WS, syncedId)).toBe(false);
+    const gone = db
+      .prepare(`SELECT COUNT(*) as count FROM transactions WHERE id = ?`)
+      .get(manualId) as { count: number };
+    expect(gone.count).toBe(0);
+  });
+});
+
+describe("date normalization", () => {
+  const rawTxn = (overrides: Record<string, unknown>) => ({
+    accountNumber: "777",
+    date: "2030-08-31T21:00:00.000Z",
+    processedDate: "2030-08-31T21:00:00.000Z",
+    originalAmount: 100,
+    originalCurrency: "ILS",
+    chargedAmount: 100,
+    chargedCurrency: null,
+    description: "iso salary",
+    memo: null,
+    type: "normal",
+    status: "completed",
+    identifier: null,
+    installmentNumber: null,
+    installmentTotal: null,
+    ...overrides,
+  });
+
+  it("stores scraped UTC timestamps as the Israel-local day, dedup-stable", () => {
+    // 21:00 UTC on Aug 31 is midnight Sept 1 in Israel: the row must land
+    // in September, not fall between the months.
+    const first = queries.insertTransactions(
+      WS,
+      [rawTxn({})] as never,
+      "discount",
+      1,
+      1
+    );
+    expect(first.added).toBe(1);
+
+    const stored = db
+      .prepare(
+        `SELECT date, processed_date FROM transactions WHERE description = 'iso salary'`
+      )
+      .all() as { date: string; processed_date: string }[];
+    expect(stored).toHaveLength(1);
+    expect(stored[0].date).toBe("2030-09-01");
+    expect(stored[0].processed_date).toBe("2030-09-01");
+
+    const septemberIds = queries.resolveFilteredTransactionIds(WS, {
+      from: "2030-09-01",
+      to: "2030-09-30",
+    });
+    const row = db
+      .prepare(`SELECT id FROM transactions WHERE description = 'iso salary'`)
+      .get() as { id: number };
+    expect(septemberIds).toContain(row.id);
+
+    // Re-syncing the exact same scraped payload must dedup, not duplicate.
+    const second = queries.insertTransactions(
+      WS,
+      [rawTxn({})] as never,
+      "discount",
+      1,
+      1
+    );
+    expect(second.added).toBe(0);
+    expect(
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) as count FROM transactions WHERE description = 'iso salary'`
+          )
+          .get() as { count: number }
+      ).count
+    ).toBe(1);
+  });
+
+  it("repairs legacy ISO rows in place so future syncs still dedup", () => {
+    // Simulate a pre-fix row: ISO date stored raw, hash computed from it.
+    const legacyDate = "2030-10-31T22:00:00.000Z"; // Nov 1 in Israel (IST)
+    const legacyHash = computeDedupHash({
+      accountNumber: "777",
+      date: legacyDate,
+      originalAmount: 42,
+      originalCurrency: "ILS",
+      description: "legacy row",
+      identifier: null,
+      installmentNumber: null,
+      installmentTotal: null,
+    });
+    db.prepare(
+      `INSERT INTO transactions (
+         workspace_id, account_number, date, processed_date, original_amount,
+         original_currency, charged_amount, description, type, status,
+         provider, sync_run_id, dedup_hash, dedup_sequence, kind
+       ) VALUES (?, '777', ?, ?, 42, 'ILS', -42, 'legacy row', 'normal',
+                 'completed', 'discount', 1, ?, 0, 'expense')`
+    ).run(WS, legacyDate, legacyDate, legacyHash);
+
+    const result = queries.normalizeLegacyTransactionDates();
+    expect(result.updated).toBeGreaterThanOrEqual(1);
+
+    const stored = db
+      .prepare(
+        `SELECT date FROM transactions WHERE description = 'legacy row'`
+      )
+      .get() as { date: string };
+    expect(stored.date).toBe("2030-11-01");
+
+    // The same scraped payload arriving again must match the repaired row.
+    const resync = queries.insertTransactions(
+      WS,
+      [
+        {
+          accountNumber: "777",
+          date: legacyDate,
+          processedDate: legacyDate,
+          originalAmount: 42,
+          originalCurrency: "ILS",
+          chargedAmount: -42,
+          chargedCurrency: null,
+          description: "legacy row",
+          memo: null,
+          type: "normal",
+          status: "completed",
+          identifier: null,
+          installmentNumber: null,
+          installmentTotal: null,
+        },
+      ] as never,
+      "discount",
+      1,
+      1
+    );
+    expect(resync.added).toBe(0);
+    expect(
+      (
+        db
+          .prepare(
+            `SELECT COUNT(*) as count FROM transactions WHERE description = 'legacy row'`
+          )
+          .get() as { count: number }
+      ).count
+    ).toBe(1);
+  });
+});
+
+describe("clearing categories", () => {
+  it("single and bulk clear reset category, source, and review flag", () => {
+    const a = insertTxn({ amount: -10, kind: "expense" });
+    const b = insertTxn({ amount: -20, kind: "expense" });
+    queries.bulkAssignCategory(WS, [a, b], expenseCategoryId, "expense");
+
+    queries.clearTransactionCategory(WS, a);
+    expect(getRow(a)).toMatchObject({
+      category_id: null,
+      category_source: null,
+    });
+
+    const cleared = queries.bulkClearCategory(WS, [b]);
+    expect(cleared).toBe(1);
+    expect(getRow(b).category_id).toBeNull();
+  });
+});
+
+describe("notes and nicknames", () => {
+  it("stores and clears a user note", () => {
+    const id = insertTxn({ amount: -10, kind: "expense" });
+    expect(queries.setTransactionNote(WS, id, "split with roommate")).toBe(
+      true
+    );
+    const note = () =>
+      (db.prepare(`SELECT note FROM transactions WHERE id = ?`).get(id) as {
+        note: string | null;
+      }).note;
+    expect(note()).toBe("split with roommate");
+    queries.setTransactionNote(WS, id, null);
+    expect(note()).toBeNull();
+  });
+
+  it("merges card settings and joins them into the accounts list", async () => {
+    const cards = await import("./cards");
+    insertTxn({ amount: -10, kind: "expense", accountNumber: "5555" });
+    cards.updateCardSettings(WS, "5555", { nickname: "Gold card" });
+    cards.updateCardSettings(WS, "5555", {
+      cardType: "credit",
+      billingDay: 10,
+    });
+
+    const row = queries
+      .listTransactionAccounts(WS)
+      .find((a) => a.accountNumber === "5555");
+    // Partial updates merge: the nickname survives the type/day write.
+    expect(row).toMatchObject({
+      nickname: "Gold card",
+      cardType: "credit",
+      billingDay: 10,
+    });
+
+    cards.updateCardSettings(WS, "5555", {
+      nickname: null,
+      cardType: null,
+      billingDay: null,
+    });
+    expect(
+      queries
+        .listTransactionAccounts(WS)
+        .find((a) => a.accountNumber === "5555")?.nickname
+    ).toBeNull();
+  });
+});
+
+describe("category hierarchy", () => {
+  it("allows deep parents but rejects cycles", async () => {
+    const cats = await import("./categories");
+    const a = cats.ensureCategory(WS, "Deep A", "circle-dot", "expense");
+    const b = cats.ensureCategory(WS, "Deep B", "circle-dot", "expense", {
+      parentId: a.id,
+    });
+    const c = cats.ensureCategory(WS, "Deep C", "circle-dot", "expense", {
+      parentId: b.id,
+    });
+    expect(c.parentId).toBe(b.id);
+
+    // Grandchild's default color shares the parent's hue family, not the
+    // generic palette pick.
+    expect(c.color).toMatch(/^#[0-9a-f]{6}$/i);
+
+    const cycle = cats.setCategoryParent(WS, a.id, c.id);
+    expect(cycle).toMatchObject({ ok: false, reason: "cycle" });
+
+    const reparent = cats.setCategoryParent(WS, c.id, a.id);
+    expect(reparent.ok).toBe(true);
   });
 });
 
@@ -235,7 +637,9 @@ describe("getTransactionsSummary", () => {
     insertTxn({ amount: -400, kind: "expense", date });
     // A refund: positive amount on an expense row reduces spending.
     insertTxn({ amount: 50, kind: "expense", date });
-    insertTxn({ amount: -2000, kind: "transfer", date });
+    // Auto transfer = card-billing duplicate; user transfer = intentional.
+    insertTxn({ amount: -2000, kind: "transfer", kindSource: "auto", date });
+    insertTxn({ amount: -300, kind: "transfer", kindSource: "user", date });
     insertTxn({ amount: -100, kind: "expense", excluded: true, date });
 
     const summary = queries.getTransactionsSummary(
@@ -249,9 +653,10 @@ describe("getTransactionsSummary", () => {
     expect(summary.net).toBe(650);
     expect(summary.notCounted).toEqual({
       count: 2,
-      total: 2100,
+      total: 400,
       excludedCount: 1,
       transferCount: 1,
     });
+    expect(summary.duplicates).toEqual({ count: 1, total: 2000 });
   });
 });

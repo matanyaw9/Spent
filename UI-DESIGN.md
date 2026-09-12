@@ -78,9 +78,12 @@ Linear). Actions:
 
 ### Rules engine
 
-Today two hardcoded rule types exist in disguise: `excluded_merchants`
-("always exclude this merchant") and apply-categorization-to-history.
-Generalize into one `rules` table and one settings UI:
+Today one hardcoded rule type exists in disguise: `excluded_merchants`
+("always exclude this merchant"). Apply-categorization-to-history was the
+second, but it was removed on 2026-09-05: silently rewriting a merchant's
+other rows on a single-row edit surprised more than it helped. Retroactive
+apply comes back as an explicit, previewed rules action. Generalize into
+one `rules` table and one settings UI:
 
 ```
 rules (
@@ -222,6 +225,55 @@ reason chips on excluded and transfer rows, and goal 5's loading
 feedback on connection tests. Arrow-key roving focus from the Selection
 spec is deferred to a polish pass (checkboxes are fully keyboard
 reachable via Tab/Space).
+
+Status 2026-09-05, second wave: searchable category picker with inline
+create (Outlook-style labels, no settings detour), row-click / Ctrl-click
+/ Shift-click selection, an advanced filters popover (excluded tri-state,
+amount range, custom date range, per-card filter), the card/account shown
+on every row, manual cash entries (add and delete), a per-category color
+picker in settings, and single-row category edits no longer cascade to
+merchant history.
+
+Status 2026-09-05, third wave: transaction dates normalized to
+Israel-local days (fixes rows from the 1st of a month vanishing from
+every month view), category filter folded into the Filters popover with
+removable active-filter chips under the header, click-outside and
+kept-after-action selection, emoji icons on categories (defaults seeded,
+editable per category), and custom colors saved into the palette.
+
+Status 2026-09-05, fourth wave: not-counted rows (transfers and
+excluded) are hidden from the list by default because card-billing
+transfers just duplicate itemized card spending; a tri-state in Filters
+and the footer toggle reveal them. Row-body clicks always toggle
+selection; click-outside deselects properly. Date range got From/To
+labels with a last-30-days default. Per-transaction notes (never
+touched by sync), per-card nicknames with last-4 display (account
+numbers hidden for banks), Uncategorized selectable in every picker,
+the whole color palette editable per swatch, and category creation
+with a parent at any depth (children inherit the parent's color
+family; summary rollups recurse).
+
+Status 2026-09-05, fifth wave: auto-detected card-billing transfers
+(duplicates) never appear in the list at all; the footer reports how
+many are hidden. The not-counted tri-state now governs only excluded
+rows and user-marked transfers. All filters moved onto one inline bar
+under the table title (kind, category, card, amount, dates,
+not-counted; each control announces its state) replacing the compressed
+Filters button and the chips. A Credit cards section in bank settings
+edits nickname, card type, and billing day per card. Filter changes
+keep the selection (only select-all-matching resets), and the checkbox
+column appears only while something is selected; a row click starts a
+selection.
+
+Status 2026-09-05, sixth wave: numberless card-billing lines (a company
+keyword with no card number) now count as flagged spending instead of
+silently becoming transfers, because the keyword can't say WHICH card
+was billed and an untracked card's aggregate is the only record of that
+spending. Amount and date filters became plain inline inputs (no
+dropdowns); not-counted is a small select; billing day is a number
+input (1-31). The category picker shows the tree with indented
+sub-categories when browsing. The not-counted footer FYI is gone; the
+filter bar covers it.
 
 ## Open questions
 

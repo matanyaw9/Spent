@@ -1,5 +1,6 @@
 "use client";
 
+import { categoryEmoji } from "@/lib/category-emoji";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -192,6 +193,7 @@ function CategoryCell({
   value: string;
   onChange: (v: string) => void;
 }) {
+  const emoji = categoryEmoji(category.icon);
   const Icon = ICON_MAP[category.icon ?? "circle-dot"] ?? CircleDot;
   const accent = shade(category.color);
   const filled = value.trim() !== "" && Number(value.trim()) > 0;
@@ -210,7 +212,11 @@ function CategoryCell({
         className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
         style={{ background: tint(category.color, 0.18) }}
       >
-        <Icon className="h-3.5 w-3.5" style={{ color: accent }} />
+        {emoji ? (
+          <span className="text-xs leading-none">{emoji}</span>
+        ) : (
+          <Icon className="h-3.5 w-3.5" style={{ color: accent }} />
+        )}
       </div>
       <Tooltip>
         <TooltipTrigger

@@ -181,6 +181,10 @@ export interface TransactionsSummary {
     excludedCount: number;
     transferCount: number;
   };
+  duplicates: {
+    count: number;
+    total: number;
+  };
 }
 
 export function getTransactionsSummary(params: {
@@ -210,16 +214,16 @@ export function getTransactions(params: {
   kind?: TransactionKindFilter;
   provider?: string;
   credentialIds?: number[];
-  notCounted?: boolean;
+  notCounted?: "all" | "hidden" | "only";
+  amountMin?: number;
+  amountMax?: number;
+  accountNumbers?: string[];
 }) {
   const searchParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined) return;
-    if (
-      (key === "categoryIds" || key === "credentialIds") &&
-      Array.isArray(value)
-    ) {
-      for (const id of value) searchParams.append(key, String(id));
+    if (Array.isArray(value)) {
+      for (const item of value) searchParams.append(key, String(item));
       return;
     }
     searchParams.set(key, String(value));
@@ -236,11 +240,89 @@ export interface BulkTransactionFilter {
   categoryIds?: number[];
   credentialIds?: number[];
   kind?: TransactionKindFilter;
-  notCounted?: boolean;
+  notCounted?: "all" | "hidden" | "only";
+  amountMin?: number;
+  amountMax?: number;
+  accountNumbers?: string[];
+}
+
+export interface TransactionAccount {
+  provider: string;
+  accountNumber: string;
+  count: number;
+  nickname: string | null;
+  cardType: "credit" | "debit" | "prepaid" | null;
+  billingDay: number | null;
+}
+
+export function listTransactionAccounts() {
+  return fetchJSON<TransactionAccount[]>("/api/transactions/accounts");
+}
+
+export function updateCardSettings(
+  accountNumber: string,
+  settings: {
+    nickname?: string | null;
+    cardType?: "credit" | "debit" | "prepaid" | null;
+    billingDay?: number | null;
+  }
+) {
+  return fetchJSON<{ success: boolean }>("/api/transactions/accounts", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountNumber, ...settings }),
+  });
+}
+
+export function setTransactionNote(id: number, note: string | null) {
+  return fetchJSON<{ success: boolean }>(`/api/transactions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ note }),
+  });
+}
+
+export interface ManualTransactionInput {
+  date: string;
+  amount: number;
+  kind: TransactionKind;
+  description: string;
+  categoryId?: number | null;
+  memo?: string | null;
+}
+
+export function createManualTransaction(input: ManualTransactionInput) {
+  return fetchJSON<{ id: number }>("/api/transactions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteTransaction(id: number) {
+  return fetchJSON<{ success: boolean }>(`/api/transactions/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function updateCategoryIcon(id: number, icon: string | null) {
+  return fetchJSON<{ success: boolean }>(`/api/categories/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ icon }),
+  });
+}
+
+export function updateCategoryColor(id: number, color: string) {
+  return fetchJSON<{ success: boolean }>(`/api/categories/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ color }),
+  });
 }
 
 export type BulkTransactionAction =
-  | { type: "category"; categoryId: number }
+  | { type: "category"; categoryId: number | null }
   | { type: "kind"; kind: TransactionKind }
   | { type: "exclude"; excluded: boolean };
 
@@ -332,7 +414,10 @@ export function getCategories(kind?: CategoryKindFilter) {
   return fetchJSON<Category[]>(`/api/categories${qs}`);
 }
 
-export function updateTransactionCategory(id: number, categoryId: number) {
+export function updateTransactionCategory(
+  id: number,
+  categoryId: number | null
+) {
   return fetchJSON<{ success: boolean }>(`/api/transactions/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -443,6 +528,7 @@ export function createCategory(input: {
   isParent?: boolean;
   icon?: string;
   description?: string | null;
+  parentId?: number | null;
 }) {
   return fetchJSON<Category>("/api/categories", {
     method: "POST",

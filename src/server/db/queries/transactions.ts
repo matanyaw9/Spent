@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { getDb } from "../index";
 import { computeDedupHash } from "../../lib/dedup";
 import {
@@ -9,6 +10,7 @@ import {
   type TrackedCards,
 } from "../../lib/transfers";
 import { normalizeMerchant } from "../../lib/merchant-memory";
+import { toJerusalemDay } from "../../lib/date-utils";
 import type {
   TransactionWithCategory,
   MonthlySummary,
@@ -82,9 +84,13 @@ export function insertTransactions(
 
   const batchInsert = db.transaction(() => {
     for (const txn of transactions) {
+      // Normalize scraped timestamps to the Israel-local day BEFORE hashing
+      // so the dedup hash stays stable across syncs (see toJerusalemDay).
+      const txnDate = toJerusalemDay(txn.date);
+      const processedDate = toJerusalemDay(txn.processedDate);
       const hash = computeDedupHash({
         accountNumber: txn.accountNumber,
-        date: txn.date,
+        date: txnDate,
         originalAmount: txn.originalAmount,
         originalCurrency: txn.originalCurrency,
         description: txn.description,
@@ -106,8 +112,8 @@ export function insertTransactions(
       const params = {
         workspaceId,
         accountNumber: txn.accountNumber,
-        date: txn.date,
-        processedDate: txn.processedDate,
+        date: txnDate,
+        processedDate,
         originalAmount: txn.originalAmount,
         originalCurrency: txn.originalCurrency,
         chargedAmount: txn.chargedAmount,
@@ -302,8 +308,21 @@ export interface TransactionListFilter {
   /** @deprecated Use credentialIds */
   credentialId?: number;
   credentialIds?: number[];
-  /** Only rows that don't count toward totals: excluded or transfers. */
-  notCounted?: boolean;
+  /**
+   * Visibility of rows that don't count toward totals (excluded rows and
+   * user-marked transfers): "hidden" drops them, "only" isolates them for
+   * review, and "all"/unset shows everything. Auto-detected transfers are
+   * a separate case: they're the bank's billing line duplicating itemized
+   * card spending, so the list NEVER shows them (see includeDuplicates).
+   */
+  notCounted?: "all" | "hidden" | "only";
+  /** Escape hatch for validation tooling; no UI sets this. */
+  includeDuplicates?: boolean;
+  /** Magnitude bounds, applied to ABS(charged_amount). */
+  amountMin?: number;
+  amountMax?: number;
+  /** Filter to specific cards/accounts (transactions.account_number). */
+  accountNumbers?: string[];
 }
 
 interface QueryParams extends TransactionListFilter {
@@ -340,7 +359,7 @@ const TRANSACTION_LIST_FROM = `
 
 const TRANSACTION_LIST_SELECT = `
   SELECT t.*, c.name AS category_name, c.color AS category_color,
-         bc.label AS account_label
+         c.icon AS category_icon, bc.label AS account_label
   ${TRANSACTION_LIST_FROM}`;
 
 function buildListConditions(
@@ -378,8 +397,29 @@ function buildListConditions(
     conditions.push("t.kind = ?");
     values.push(kind);
   }
-  if (params.notCounted) {
+  // Card-billing duplicates (auto-detected transfers) never appear: they
+  // mirror spending that's already itemized on the card side and teach
+  // nothing. A transfer the user marked themselves stays visible.
+  if (!params.includeDuplicates) {
+    conditions.push("(t.kind != 'transfer' OR t.kind_source != 'auto')");
+  }
+  if (params.notCounted === "only") {
     conditions.push("(t.is_excluded = 1 OR t.kind = 'transfer')");
+  } else if (params.notCounted === "hidden") {
+    conditions.push("t.is_excluded = 0 AND t.kind != 'transfer'");
+  }
+  if (params.amountMin != null) {
+    conditions.push("ABS(t.charged_amount) >= ?");
+    values.push(params.amountMin);
+  }
+  if (params.amountMax != null) {
+    conditions.push("ABS(t.charged_amount) <= ?");
+    values.push(params.amountMax);
+  }
+  if (params.accountNumbers && params.accountNumbers.length > 0) {
+    const placeholders = params.accountNumbers.map(() => "?").join(",");
+    conditions.push(`t.account_number IN (${placeholders})`);
+    for (const acc of params.accountNumbers) values.push(acc);
   }
   if (params.provider) {
     conditions.push("t.provider = ?");
@@ -754,8 +794,10 @@ interface TransactionRow {
   is_excluded: number;
   created_at: string;
   updated_at: string;
+  note: string | null;
   category_name?: string | null;
   category_color?: string | null;
+  category_icon?: string | null;
   account_label?: string | null;
 }
 
@@ -772,6 +814,7 @@ function mapTransactionRow(row: unknown): TransactionWithCategory {
     chargedCurrency: r.charged_currency,
     description: r.description,
     memo: r.memo,
+    note: r.note ?? null,
     type: r.type as "normal" | "installments",
     status: r.status as "completed" | "pending",
     identifier: r.identifier,
@@ -791,6 +834,7 @@ function mapTransactionRow(row: unknown): TransactionWithCategory {
     updatedAt: r.updated_at,
     categoryName: r.category_name ?? null,
     categoryColor: r.category_color ?? null,
+    categoryIcon: r.category_icon ?? null,
   };
 }
 
@@ -806,6 +850,201 @@ export function setTransactionKind(
        WHERE workspace_id = ? AND id = ?`
     )
     .run(kind, workspaceId, id);
+}
+
+/**
+ * One-time repair for rows synced before dates were normalized: convert
+ * ISO-timestamp date/processed_date values to the Israel-local day and
+ * recompute the dedup hash to match what future syncs will produce (the
+ * hash covers the date, so leaving old hashes behind would re-import
+ * every transaction as a duplicate). Idempotent: normalized rows carry
+ * no 'T' in their dates and are never touched again.
+ */
+export function normalizeLegacyTransactionDates(): { updated: number } {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT id, workspace_id as workspaceId, account_number as accountNumber,
+              date, processed_date as processedDate,
+              original_amount as originalAmount,
+              original_currency as originalCurrency, description, identifier,
+              installment_number as installmentNumber,
+              installment_total as installmentTotal
+       FROM transactions
+       WHERE date LIKE '%T%' OR processed_date LIKE '%T%'
+       ORDER BY id`
+    )
+    .all() as {
+    id: number;
+    workspaceId: number;
+    accountNumber: string;
+    date: string;
+    processedDate: string;
+    originalAmount: number;
+    originalCurrency: string;
+    description: string;
+    identifier: string | null;
+    installmentNumber: number | null;
+    installmentTotal: number | null;
+  }[];
+  if (rows.length === 0) return { updated: 0 };
+
+  const existingCountStmt = db.prepare(
+    `SELECT COUNT(*) as count FROM transactions
+     WHERE workspace_id = ? AND dedup_hash = ? AND date NOT LIKE '%T%'`
+  );
+  const updateStmt = db.prepare(
+    `UPDATE transactions
+     SET date = ?, processed_date = ?, dedup_hash = ?, dedup_sequence = ?,
+         updated_at = datetime('now')
+     WHERE id = ?`
+  );
+
+  db.transaction(() => {
+    // Day-granularity can collapse hashes that time-granularity kept
+    // distinct, so sequences are reassigned per (workspace, new hash),
+    // seeded with any already-normalized rows holding that hash.
+    const seqCounter = new Map<string, number>();
+    for (const row of rows) {
+      const newDate = toJerusalemDay(row.date);
+      const newProcessed = toJerusalemDay(row.processedDate);
+      const newHash = computeDedupHash({
+        accountNumber: row.accountNumber,
+        date: newDate,
+        originalAmount: row.originalAmount,
+        originalCurrency: row.originalCurrency,
+        description: row.description,
+        identifier: row.identifier,
+        installmentNumber: row.installmentNumber,
+        installmentTotal: row.installmentTotal,
+      });
+      const key = `${row.workspaceId}|${newHash}`;
+      let seq = seqCounter.get(key);
+      if (seq == null) {
+        seq = (
+          existingCountStmt.get(row.workspaceId, newHash) as { count: number }
+        ).count;
+      }
+      updateStmt.run(newDate, newProcessed, newHash, seq, row.id);
+      seqCounter.set(key, seq + 1);
+    }
+  })();
+
+  console.log(
+    `[db] normalized ${rows.length} transaction dates to Israel-local days`
+  );
+  return { updated: rows.length };
+}
+
+export interface TransactionAccount {
+  provider: string;
+  accountNumber: string;
+  count: number;
+  nickname: string | null;
+  cardType: "credit" | "debit" | "prepaid" | null;
+  billingDay: number | null;
+}
+
+/** Distinct cards/accounts that appear on this workspace's transactions. */
+export function listTransactionAccounts(
+  workspaceId: number
+): TransactionAccount[] {
+  return getDb()
+    .prepare(
+      `SELECT t.provider, t.account_number as accountNumber, COUNT(*) as count,
+              c.nickname as nickname, c.card_type as cardType,
+              c.billing_day as billingDay
+       FROM transactions t
+       LEFT JOIN cards c
+         ON c.workspace_id = t.workspace_id
+        AND c.account_number = t.account_number
+       WHERE t.workspace_id = ?
+       GROUP BY t.provider, t.account_number
+       ORDER BY t.provider, t.account_number`
+    )
+    .all(workspaceId) as TransactionAccount[];
+}
+
+/**
+ * Manual entries (cash and the like) have no scraper run behind them, but
+ * sync_run_id is NOT NULL, so each workspace lazily gets one synthetic
+ * completed run that all manual rows hang off.
+ */
+function getOrCreateManualSyncRun(workspaceId: number): number {
+  const db = getDb();
+  const existing = db
+    .prepare(
+      `SELECT id FROM sync_runs
+       WHERE workspace_id = ? AND provider = 'manual'
+       LIMIT 1`
+    )
+    .get(workspaceId) as { id: number } | undefined;
+  if (existing) return existing.id;
+  const result = db
+    .prepare(
+      `INSERT INTO sync_runs (workspace_id, provider, started_at, completed_at, status, scrape_from_date)
+       VALUES (?, 'manual', datetime('now'), datetime('now'), 'completed', date('now'))`
+    )
+    .run(workspaceId);
+  return Number(result.lastInsertRowid);
+}
+
+export interface ManualTransactionInput {
+  date: string;
+  /** Magnitude; the kind decides the sign. */
+  amount: number;
+  kind: "expense" | "income" | "transfer";
+  description: string;
+  categoryId?: number | null;
+  memo?: string | null;
+}
+
+export function createManualTransaction(
+  workspaceId: number,
+  input: ManualTransactionInput
+): number {
+  const syncRunId = getOrCreateManualSyncRun(workspaceId);
+  const magnitude = Math.abs(input.amount);
+  const chargedAmount = input.kind === "income" ? magnitude : -magnitude;
+  const result = getDb()
+    .prepare(
+      `INSERT INTO transactions (
+         workspace_id, account_number, date, processed_date,
+         original_amount, original_currency, charged_amount, description,
+         memo, type, status, provider, sync_run_id, dedup_hash,
+         dedup_sequence, kind, kind_source, category_id, category_source,
+         needs_review
+       ) VALUES (?, 'cash', ?, ?, ?, 'ILS', ?, ?, ?, 'normal', 'completed',
+                 'manual', ?, ?, 0, ?, 'user', ?, ?, 0)`
+    )
+    .run(
+      workspaceId,
+      input.date,
+      input.date,
+      chargedAmount,
+      chargedAmount,
+      input.description,
+      input.memo ?? null,
+      syncRunId,
+      `manual-${randomUUID()}`,
+      input.kind,
+      input.categoryId ?? null,
+      input.categoryId != null ? "user" : null
+    );
+  return Number(result.lastInsertRowid);
+}
+
+export function deleteManualTransaction(
+  workspaceId: number,
+  id: number
+): boolean {
+  const result = getDb()
+    .prepare(
+      `DELETE FROM transactions
+       WHERE workspace_id = ? AND id = ? AND provider = 'manual'`
+    )
+    .run(workspaceId, id);
+  return result.changes > 0;
 }
 
 /** Chunk ids so IN (...) never exceeds SQLite's bound-variable limit. */
@@ -920,6 +1159,56 @@ export function bulkAssignCategory(
   };
 }
 
+export function setTransactionNote(
+  workspaceId: number,
+  id: number,
+  note: string | null
+): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE transactions
+       SET note = ?, updated_at = datetime('now')
+       WHERE workspace_id = ? AND id = ?`
+    )
+    .run(note, workspaceId, id);
+  return result.changes > 0;
+}
+
+export function clearTransactionCategory(
+  workspaceId: number,
+  id: number
+): void {
+  getDb()
+    .prepare(
+      `UPDATE transactions
+       SET category_id = NULL, category_source = NULL, needs_review = 0,
+           updated_at = datetime('now')
+       WHERE workspace_id = ? AND id = ?`
+    )
+    .run(workspaceId, id);
+}
+
+export function bulkClearCategory(workspaceId: number, ids: number[]): number {
+  if (ids.length === 0) return 0;
+  const db = getDb();
+  let updated = 0;
+  db.transaction(() => {
+    for (const chunk of chunkIds(ids)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = db
+        .prepare(
+          `UPDATE transactions
+           SET category_id = NULL, category_source = NULL, needs_review = 0,
+               updated_at = datetime('now')
+           WHERE workspace_id = ? AND id IN (${placeholders})`
+        )
+        .run(workspaceId, ...chunk);
+      updated += result.changes;
+    }
+  })();
+  return updated;
+}
+
 export function setTransactionNeedsReview(
   workspaceId: number,
   id: number,
@@ -994,12 +1283,20 @@ export interface TransactionsSummary {
   net: number;
   topMerchants: { description: string; total: number; count: number }[];
   pendingReviewCount: number;
-  /** Rows in range that don't count toward the totals above. */
+  /**
+   * Rows in range that don't count toward the totals above and are shown
+   * grayed in the list: excluded rows and user-marked transfers.
+   */
   notCounted: {
     count: number;
     total: number;
     excludedCount: number;
     transferCount: number;
+  };
+  /** Auto-detected card-billing transfers; never shown in the list. */
+  duplicates: {
+    count: number;
+    total: number;
   };
 }
 
@@ -1101,7 +1398,7 @@ export function getTransactionsSummary(
               COALESCE(SUM(CASE WHEN is_excluded = 0 AND kind = 'transfer' THEN 1 ELSE 0 END), 0) as transferCount
        FROM transactions
        WHERE ${ncConditions.join(" AND ")}
-         AND (is_excluded = 1 OR kind = 'transfer')`
+         AND (is_excluded = 1 OR (kind = 'transfer' AND kind_source = 'user'))`
     )
     .get(...ncValues) as {
     count: number;
@@ -1109,6 +1406,16 @@ export function getTransactionsSummary(
     excludedCount: number;
     transferCount: number;
   };
+
+  const duplicates = db
+    .prepare(
+      `SELECT COUNT(*) as count,
+              COALESCE(SUM(ABS(charged_amount)), 0) as total
+       FROM transactions
+       WHERE ${ncConditions.join(" AND ")}
+         AND is_excluded = 0 AND kind = 'transfer' AND kind_source = 'auto'`
+    )
+    .get(...ncValues) as { count: number; total: number };
 
   const pendingReview = db
     .prepare(
@@ -1133,6 +1440,7 @@ export function getTransactionsSummary(
     topMerchants: topMerchantsRows,
     pendingReviewCount: pendingReview.count,
     notCounted,
+    duplicates,
   };
 }
 

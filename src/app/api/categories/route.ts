@@ -25,6 +25,7 @@ interface CreateBody {
   isParent?: unknown;
   icon?: unknown;
   description?: unknown;
+  parentId?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -66,7 +67,13 @@ export async function POST(request: Request) {
       });
       return NextResponse.json(cat, { status: 201 });
     }
-    const cat = ensureCategory(workspaceId, body.name, icon, body.kind);
+    const parentId =
+      body.parentId != null && Number.isInteger(Number(body.parentId))
+        ? Number(body.parentId)
+        : null;
+    const cat = ensureCategory(workspaceId, body.name, icon, body.kind, {
+      parentId,
+    });
     return NextResponse.json(cat, { status: 201 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";

@@ -210,13 +210,44 @@
     "chipTransfer": "Transfer",
     "chipExcludedTooltip": "Not counted in totals. Click to include it again.",
     "chipTransferTooltip": "Money moved between your own accounts; not counted as income or spending. Change it from the row menu.",
-    "notCountedSummary": "{count, plural, one {# transaction not counted} other {# transactions not counted}} ({amount})",
-    "notCountedBreakdown": "{excluded} excluded · {transfers} transfers",
-    "notCountedShow": "Show only these",
-    "notCountedShowAll": "Show all activity",
     "kpiIncomeHint": "Rows marked as income. Excluded rows and transfers are not counted.",
     "kpiExpensesHint": "Rows marked as expenses. Excluded rows and transfers are not counted.",
-    "kpiNetHint": "Income minus expenses. Excluded rows and transfers are not counted."
+    "kpiNetHint": "Income minus expenses. Excluded rows and transfers are not counted.",
+    "filterNotCountedLabel": "Not counted (transfers & excluded)",
+    "filterNotCountedHidden": "Hidden",
+    "filterNotCountedAll": "Show all",
+    "filterNotCountedOnly": "Only these",
+    "filterNotCountedHint": "Transfers are usually the bank's billing line duplicating your card spending, so they're hidden by default.",
+    "filterDateFrom": "From",
+    "filterDateTo": "To",
+    "noteAdd": "Add note",
+    "noteEdit": "Edit note",
+    "noteRemove": "Remove note",
+    "noteSave": "Save note",
+    "notePlaceholder": "Anything worth remembering about this transaction",
+    "filterAmountMin": "Min",
+    "filterAmountMax": "Max",
+    "filterCardLabel": "Card / account",
+    "filterClearAll": "Clear filters",
+    "categorySearchPlaceholder": "Search or create...",
+    "categorySearchEmpty": "No matching categories.",
+    "categoryCreate": "Create \"{name}\"",
+    "categoryCreateInKind": "Create \"{name}\" in {kind}",
+    "addTransaction": "Add",
+    "addTransactionTitle": "Add a transaction",
+    "addTransactionHint": "Record something the banks don't see, like cash.",
+    "addTransactionDate": "Date",
+    "addTransactionAmount": "Amount (ILS)",
+    "addTransactionDescription": "Description",
+    "addTransactionDescriptionPlaceholder": "e.g. Falafel, cash",
+    "addTransactionPickCategory": "Pick a category",
+    "addTransactionMemo": "Note (optional)",
+    "addTransactionMemoPlaceholder": "Anything worth remembering",
+    "addTransactionCancel": "Cancel",
+    "addTransactionSave": "Add transaction",
+    "addTransactionToast": "Transaction added",
+    "deleteEntry": "Delete entry",
+    "deleteEntryToast": "Entry deleted"
   },
   "dashboard": {
     "syncing": "Syncing…",
@@ -296,6 +327,16 @@
     "ofBudget": "of {amount}"
   },
   "settings": {
+    "cards": {
+      "title": "Credit cards",
+      "description": "Cards your syncs have seen. Nicknames show on transactions instead of the provider name.",
+      "nicknamePlaceholder": "Nickname",
+      "typeUnset": "Type not set",
+      "typeCredit": "Credit",
+      "typeDebit": "Debit",
+      "typePrepaid": "Prepaid",
+      "billingDay": "Billing day"
+    },
     "pageTitle": "Settings",
     "sidebar": {
       "title": "Settings",
@@ -659,6 +700,9 @@
     "Fees & Taxes": "Fees & Taxes"
   },
   "banks": {
+    "manual": {
+      "name": "Manual"
+    },
     "isracard": {
       "name": "Isracard",
       "blurb": "Israeli Mastercard / Visa"

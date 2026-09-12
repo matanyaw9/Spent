@@ -34,48 +34,37 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   ArrowLeftRight,
-  Wallet,
-  Tags,
   EyeOff,
   Eye,
+  StickyNote,
+  Trash2,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useQuery } from "@tanstack/react-query";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import {
   updateTransactionCategory,
   setTransactionKind,
+  setTransactionNote,
   approveTransactionCategory,
-  getCategories,
+  deleteTransaction,
   setTransactionExcluded,
-  type TransactionsSummary,
 } from "@/lib/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { CategoryPicker } from "@/components/transactions/category-picker";
 import { toast } from "sonner";
-import { translateCategoryName, translateProviderName } from "@/lib/i18n-data";
-import {
-  getAccountDisplayLabel,
-  TransactionSourceCell,
-} from "@/components/transactions/transaction-source-cell";
-import {
-  TransactionMultiFilter,
-  MultiFilterOption,
-} from "@/components/transactions/transaction-multi-filter";
-import {
-  formatMultiFilterDisplay,
-  getCategoryDescendantIds,
-  isCategoryFilterChecked,
-  toggleCategoryFilterSelection,
-} from "@/lib/transaction-filters";
+import { translateCategoryName } from "@/lib/i18n-data";
+import { categoryEmoji } from "@/lib/category-emoji";
+import { TransactionSourceCell } from "@/components/transactions/transaction-source-cell";
 import { SortableTableHead } from "@/components/transactions/sortable-table-head";
 import type { SortOrder, TransactionSortField } from "@/lib/transaction-sort";
 import { cn } from "@/lib/utils";
-import { ProviderBadge } from "@/components/setup/provider-badge";
-import type {
-  TransactionWithCategory,
-  Category,
-  Integration,
-} from "@/lib/types";
-import { BANK_PROVIDERS } from "@/lib/types";
+import type { TransactionWithCategory } from "@/lib/types";
 import type { Locale } from "@/i18n/routing";
 
 type Kind = "expense" | "income" | "transfer";
@@ -83,15 +72,15 @@ type Kind = "expense" | "income" | "transfer";
 interface TransactionsTableProps {
   transactions: TransactionWithCategory[];
   total: number;
-  categories: Category[];
-  integrations: Integration[];
   loading: boolean;
   search: string;
   onSearchChange: (search: string) => void;
-  categoryFilter: number[];
-  onCategoryFilterChange: (categoryIds: number[]) => void;
-  accountFilter: number[];
-  onAccountFilterChange: (credentialIds: number[]) => void;
+  /** True when any filter beyond the free-text search is active. */
+  filtersActive: boolean;
+  /** Extra controls (e.g. Add), rendered next to the search box. */
+  headerSlot?: React.ReactNode;
+  /** The inline filter bar, rendered under the title row. */
+  filterSlot?: React.ReactNode;
   page: number;
   onPageChange: (page: number) => void;
   sortField: TransactionSortField;
@@ -104,9 +93,8 @@ interface TransactionsTableProps {
   onSelectRows: (ids: number[], selected: boolean) => void;
   onSelectAllMatching: () => void;
   onClearSelection: () => void;
-  notCounted?: TransactionsSummary["notCounted"];
-  notCountedOnly: boolean;
-  onNotCountedOnlyChange: (value: boolean) => void;
+  /** account_number to user nickname, for the source column. */
+  cardNicknames: ReadonlyMap<string, string>;
 }
 
 const PAGE_SIZE = 50;
@@ -114,15 +102,12 @@ const PAGE_SIZE = 50;
 export function TransactionsTable({
   transactions,
   total,
-  categories,
-  integrations,
   loading,
   search,
   onSearchChange,
-  categoryFilter,
-  onCategoryFilterChange,
-  accountFilter,
-  onAccountFilterChange,
+  filtersActive,
+  headerSlot,
+  filterSlot,
   page,
   onPageChange,
   sortField,
@@ -134,13 +119,10 @@ export function TransactionsTable({
   onSelectRows,
   onSelectAllMatching,
   onClearSelection,
-  notCounted,
-  notCountedOnly,
-  onNotCountedOnlyChange,
+  cardNicknames,
 }: TransactionsTableProps) {
   const t = useTranslations("transactions");
   const tCat = useTranslations("categoriesSeeded");
-  const tBanks = useTranslations("banks");
   const locale = useLocale() as Locale;
   const queryClient = useQueryClient();
   const [updatingId, setUpdatingId] = useState<number | null>(null);
@@ -166,13 +148,10 @@ export function TransactionsTable({
     }
   };
 
-  const handleRowCheckbox = (
-    index: number,
-    event: React.MouseEvent<HTMLButtonElement>
-  ) => {
+  const applySelectionClick = (index: number, shiftKey: boolean) => {
     const txn = transactions[index];
     const nextSelected = !isRowSelected(txn.id);
-    if (event.shiftKey && lastClickedIndexRef.current != null) {
+    if (shiftKey && lastClickedIndexRef.current != null) {
       const start = Math.min(lastClickedIndexRef.current, index);
       const end = Math.max(lastClickedIndexRef.current, index);
       onSelectRows(
@@ -183,6 +162,26 @@ export function TransactionsTable({
       onSelectRows([txn.id], nextSelected);
     }
     lastClickedIndexRef.current = index;
+  };
+
+  const handleRowCheckbox = (
+    index: number,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    applySelectionClick(index, event.shiftKey);
+  };
+
+  const hasSelectionActive = allMatching || selectedIds.size > 0;
+
+  // A click anywhere on the row body toggles its selection (Shift extends
+  // the range); clicks on the row's own controls keep their meaning.
+  const handleRowBackgroundClick = (
+    index: number,
+    event: React.MouseEvent<HTMLTableRowElement>
+  ) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, label, [role='menu']")) return;
+    applySelectionClick(index, event.shiftKey);
   };
 
   const otherKinds: Record<Kind, Array<{ value: Kind; label: string }>> = {
@@ -200,7 +199,10 @@ export function TransactionsTable({
     ],
   };
 
-  const handleCategoryChange = async (txnId: number, categoryId: number) => {
+  const handleCategoryChange = async (
+    txnId: number,
+    categoryId: number | null
+  ) => {
     setUpdatingId(txnId);
     try {
       await updateTransactionCategory(txnId, categoryId);
@@ -246,6 +248,44 @@ export function TransactionsTable({
     queryClient.invalidateQueries({ queryKey: ["excluded-merchants"] });
   };
 
+  const [noteTarget, setNoteTarget] = useState<TransactionWithCategory | null>(
+    null
+  );
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+
+  const openNoteDialog = (txn: TransactionWithCategory) => {
+    setNoteDraft(txn.note ?? "");
+    setNoteTarget(txn);
+  };
+
+  const saveNote = async (value: string) => {
+    if (!noteTarget) return;
+    setNoteSaving(true);
+    try {
+      await setTransactionNote(noteTarget.id, value.trim() || null);
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      setNoteTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
+  const handleDelete = async (txn: TransactionWithCategory) => {
+    setUpdatingId(txn.id);
+    try {
+      await deleteTransaction(txn.id);
+      invalidateAfterExclude();
+      toast.success(t("deleteEntryToast"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const handleExcludeToggle = async (
     txn: TransactionWithCategory,
     alwaysForMerchant = false,
@@ -271,132 +311,6 @@ export function TransactionsTable({
     }
   };
 
-  const incomeCategoriesQuery = useQuery({
-    queryKey: ["categories", "income"],
-    queryFn: () => getCategories("income"),
-  });
-  const expenseCategoriesQuery = useQuery({
-    queryKey: ["categories", "expense"],
-    queryFn: () => getCategories("expense"),
-  });
-
-  const categoriesForKind = (rowKind: Kind): Category[] => {
-    if (rowKind === "income") return incomeCategoriesQuery.data ?? [];
-    if (rowKind === "expense") return expenseCategoriesQuery.data ?? [];
-    return [];
-  };
-
-  const accountOptions = integrations
-    .map((integration) => {
-      const info = BANK_PROVIDERS.find((b) => b.id === integration.provider);
-      const providerName = translateProviderName(
-        integration.provider,
-        info?.name ?? integration.provider,
-        tBanks
-      );
-      const { primary } = getAccountDisplayLabel(
-        providerName,
-        integration.label
-      );
-      return { integration, info, providerName, primary };
-    })
-    .sort((a, b) => a.primary.localeCompare(b.primary));
-
-  const showAccountFilter = accountOptions.length > 1;
-
-  const toggleFilterId = (ids: number[], id: number): number[] =>
-    ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
-
-  const accountLabels = accountFilter
-    .map(
-      (id) =>
-        accountOptions.find((o) => o.integration.id === id)?.primary
-    )
-    .filter((name): name is string => name != null);
-
-  const accountDisplayValue = formatMultiFilterDisplay(
-    accountLabels,
-    t("filterAny"),
-    (count) => t("filterSelectedCount", { count })
-  );
-
-  const categoryLabels = categoryFilter
-    .map((id) => categories.find((c) => c.id === id))
-    .filter((c): c is Category => c != null)
-    .map((c) => translateCategoryName(c.name, tCat));
-
-  const categoryDisplayValue = formatMultiFilterDisplay(
-    categoryLabels,
-    t("filterAny"),
-    (count) => t("filterSelectedCount", { count })
-  );
-
-  const hasActiveFilters =
-    categoryFilter.length > 0 || accountFilter.length > 0;
-
-  const handleClearFilters = () => {
-    onCategoryFilterChange([]);
-    onAccountFilterChange([]);
-    onPageChange(0);
-  };
-
-  const allCategoryIds = [
-    ...new Set(
-      categories.flatMap((c) => getCategoryDescendantIds(c.id, categories))
-    ),
-  ];
-  const allAccountIds = accountOptions.map((o) => o.integration.id);
-
-  const renderCategoryFilterOptions = (
-    parentId: number | null,
-    depth: number
-  ): React.ReactNode[] => {
-    const items = categories
-      .filter((c) => c.parentId === parentId)
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const nodes: React.ReactNode[] = [];
-    for (const cat of items) {
-      const hasChildren = categories.some((c) => c.parentId === cat.id);
-      const name = translateCategoryName(cat.name, tCat);
-      nodes.push(
-        <MultiFilterOption
-          key={cat.id}
-          selected={isCategoryFilterChecked(
-            cat.id,
-            categoryFilter,
-            categories
-          )}
-          onToggle={() =>
-            onCategoryFilterChange(
-              toggleCategoryFilterSelection(
-                categoryFilter,
-                cat.id,
-                categories
-              )
-            )
-          }
-          className={depth > 0 ? "ps-2" : undefined}
-        >
-          <div
-            className={cn(
-              "flex items-center gap-2",
-              hasChildren && "font-semibold"
-            )}
-            style={{ paddingInlineStart: depth > 0 ? depth * 12 : 0 }}
-          >
-            <div
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ backgroundColor: cat.color }}
-            />
-            {name}
-          </div>
-        </MultiFilterOption>
-      );
-      nodes.push(...renderCategoryFilterOptions(cat.id, depth + 1));
-    }
-    return nodes;
-  };
-
   return (
     <Card className="rounded-2xl border border-border bg-card shadow-none">
       <CardHeader>
@@ -414,68 +328,11 @@ export function TransactionsTable({
               }}
               className="h-8 w-[200px]"
             />
-            {showAccountFilter ? (
-              <TransactionMultiFilter
-                label={t("filterAccount")}
-                icon={Wallet}
-                displayValue={accountDisplayValue}
-                triggerClassName="w-[200px]"
-                selectAllLabel={t("filterSelectAll")}
-                clearLabel={t("filterClearSelection")}
-                onSelectAll={() => onAccountFilterChange(allAccountIds)}
-                onClear={() => onAccountFilterChange([])}
-              >
-                {accountOptions.map(({ integration, info, primary }) => (
-                  <MultiFilterOption
-                    key={integration.id}
-                    selected={accountFilter.includes(integration.id)}
-                    onToggle={() =>
-                      onAccountFilterChange(
-                        toggleFilterId(accountFilter, integration.id)
-                      )
-                    }
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      {info ? (
-                        <ProviderBadge
-                          color={info.color}
-                          name={primary}
-                          domain={info.domain}
-                          size={16}
-                          radius={5}
-                        />
-                      ) : null}
-                      <span className="truncate">{primary}</span>
-                    </div>
-                  </MultiFilterOption>
-                ))}
-              </TransactionMultiFilter>
-            ) : null}
-            <TransactionMultiFilter
-              label={t("filterCategory")}
-              icon={Tags}
-              displayValue={categoryDisplayValue}
-              selectAllLabel={t("filterSelectAll")}
-              clearLabel={t("filterClearSelection")}
-              onSelectAll={() => onCategoryFilterChange(allCategoryIds)}
-              onClear={() => onCategoryFilterChange([])}
-            >
-              {renderCategoryFilterOptions(null, 0)}
-            </TransactionMultiFilter>
-            {hasActiveFilters ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-8 shrink-0 px-2 text-xs text-muted-foreground"
-                onClick={handleClearFilters}
-              >
-                {t("filterClear")}
-              </Button>
-            ) : null}
+            {headerSlot}
           </div>
         </div>
-        {hasActiveFilters || search.trim().length > 0 ? (
+        {filterSlot}
+        {filtersActive || search.trim().length > 0 ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {t("filterScopedToList")}
           </p>
@@ -496,10 +353,7 @@ export function TransactionsTable({
           </div>
         ) : transactions.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            {search ||
-            categoryFilter.length > 0 ||
-            accountFilter.length > 0 ||
-            notCountedOnly
+            {search || filtersActive
               ? t("emptyWithFilters")
               : t("emptyNoData")}
           </div>
@@ -537,13 +391,15 @@ export function TransactionsTable({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[36px]">
-                    <Checkbox
-                      checked={headerState}
-                      onClick={handleHeaderCheckbox}
-                      aria-label={t("bulkSelectAllOnPage")}
-                    />
-                  </TableHead>
+                  {hasSelectionActive && (
+                    <TableHead className="w-[36px]">
+                      <Checkbox
+                        checked={headerState}
+                        onClick={handleHeaderCheckbox}
+                        aria-label={t("bulkSelectAllOnPage")}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead className="w-[32px]" />
                   <SortableTableHead
                     label={t("headerDate")}
@@ -607,26 +463,35 @@ export function TransactionsTable({
                   const directionColor = isIncome
                     ? "var(--status-on-track)"
                     : "var(--status-over)";
-                  const categoryKind: Kind = isIncome ? "income" : "expense";
+                  const categoryKind: "expense" | "income" =
+                    txn.kind === "income" || txn.kind === "expense"
+                      ? txn.kind
+                      : isIncome
+                        ? "income"
+                        : "expense";
                   const categoryName = txn.categoryName
                     ? translateCategoryName(txn.categoryName, tCat)
                     : t("rowUncategorized");
                   return (
                     <TableRow
                       key={txn.id}
+                      onClick={(e) => handleRowBackgroundClick(index, e)}
                       className={cn(
                         "transition-colors duration-200 hover:bg-muted/50",
                         notCountedRow && "opacity-50",
                         selected && "bg-accent/40 hover:bg-accent/50",
+                        hasSelectionActive && "select-none",
                       )}
                     >
-                      <TableCell>
-                        <Checkbox
-                          checked={selected}
-                          onClick={(e) => handleRowCheckbox(index, e)}
-                          aria-label={t("bulkSelectRow")}
-                        />
-                      </TableCell>
+                      {hasSelectionActive && (
+                        <TableCell>
+                          <Checkbox
+                            checked={selected}
+                            onClick={(e) => handleRowCheckbox(index, e)}
+                            aria-label={t("bulkSelectRow")}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
                         {isTransfer ? (
                           <div className="text-muted-foreground">
@@ -698,6 +563,17 @@ export function TransactionsTable({
                             {txn.memo}
                           </div>
                         )}
+                        {txn.note && (
+                          <button
+                            type="button"
+                            onClick={() => openNoteDialog(txn)}
+                            title={t("noteEdit")}
+                            className="mt-0.5 inline-flex items-center gap-1 text-start text-xs italic text-muted-foreground hover:text-foreground"
+                          >
+                            <StickyNote className="h-3 w-3 shrink-0" />
+                            <span className="line-clamp-2">{txn.note}</span>
+                          </button>
+                        )}
                         {txn.type === "installments" &&
                           txn.installmentNumber &&
                           txn.installmentTotal && (
@@ -711,44 +587,36 @@ export function TransactionsTable({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1.5">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger
-                              className="inline-flex"
-                              disabled={updatingId === txn.id}
+                          <CategoryPicker
+                            kinds={[categoryKind]}
+                            allowUncategorized
+                            disabled={updatingId === txn.id}
+                            onSelect={(cat) =>
+                              handleCategoryChange(txn.id, cat?.id ?? null)
+                            }
+                            triggerClassName="inline-flex"
+                          >
+                            <Badge
+                              variant="outline"
+                              className="cursor-pointer transition-colors hover:bg-accent"
+                              style={
+                                txn.categoryColor
+                                  ? {
+                                      borderColor: txn.categoryColor + "40",
+                                      backgroundColor: txn.categoryColor + "15",
+                                      color: txn.categoryColor,
+                                    }
+                                  : undefined
+                              }
                             >
-                              <Badge
-                                variant="outline"
-                                className="cursor-pointer transition-colors hover:bg-accent"
-                                style={
-                                  txn.categoryColor
-                                    ? {
-                                        borderColor: txn.categoryColor + "40",
-                                        backgroundColor: txn.categoryColor + "15",
-                                        color: txn.categoryColor,
-                                      }
-                                    : undefined
-                                }
-                              >
-                                {categoryName}
-                              </Badge>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start">
-                              {categoriesForKind(categoryKind).map((cat) => (
-                                <DropdownMenuItem
-                                  key={cat.id}
-                                  onClick={() =>
-                                    handleCategoryChange(txn.id, cat.id)
-                                  }
-                                >
-                                  <div
-                                    className="me-2 h-2 w-2 rounded-full"
-                                    style={{ backgroundColor: cat.color }}
-                                  />
-                                  {translateCategoryName(cat.name, tCat)}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                              {categoryEmoji(txn.categoryIcon) && (
+                                <span className="me-0.5">
+                                  {categoryEmoji(txn.categoryIcon)}
+                                </span>
+                              )}
+                              {categoryName}
+                            </Badge>
+                          </CategoryPicker>
                           {txn.needsReview && (
                             <Button
                               size="sm"
@@ -773,6 +641,8 @@ export function TransactionsTable({
                         <TransactionSourceCell
                           provider={txn.provider}
                           accountLabel={txn.accountLabel}
+                          accountNumber={txn.accountNumber}
+                          nickname={cardNicknames.get(txn.accountNumber)}
                         />
                       </TableCell>
                       <TableCell
@@ -806,6 +676,21 @@ export function TransactionsTable({
                                 {opt.label}
                               </DropdownMenuItem>
                             ))}
+                            <DropdownMenuItem
+                              onClick={() => openNoteDialog(txn)}
+                            >
+                              <StickyNote className="me-2 h-3.5 w-3.5" />
+                              {txn.note ? t("noteEdit") : t("noteAdd")}
+                            </DropdownMenuItem>
+                            {txn.provider === "manual" && (
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(txn)}
+                                className="text-destructive"
+                              >
+                                <Trash2 className="me-2 h-3.5 w-3.5" />
+                                {t("deleteEntry")}
+                              </DropdownMenuItem>
+                            )}
                             {txn.isExcluded ? (
                               <DropdownMenuItem
                                 onClick={() => handleExcludeToggle(txn, false)}
@@ -869,31 +754,56 @@ export function TransactionsTable({
             )}
           </>
         )}
-        {notCounted && (notCounted.count > 0 || notCountedOnly) && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-1.5">
-            <span className="text-xs text-muted-foreground">
-              {t("notCountedSummary", {
-                count: notCounted.count,
-                amount: formatCurrency(notCounted.total, "ILS", locale),
-              })}
-              {" · "}
-              {t("notCountedBreakdown", {
-                excluded: notCounted.excludedCount,
-                transfers: notCounted.transferCount,
-              })}
-            </span>
+      </CardContent>
+      <Dialog
+        open={noteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) setNoteTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {noteTarget?.note ? t("noteEdit") : t("noteAdd")}
+            </DialogTitle>
+          </DialogHeader>
+          {noteTarget && (
+            <p className="truncate text-xs text-muted-foreground">
+              {noteTarget.description} ·{" "}
+              {formatCurrency(noteTarget.chargedAmount, "ILS", locale)}
+            </p>
+          )}
+          <textarea
+            autoFocus
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            maxLength={500}
+            rows={3}
+            placeholder={t("notePlaceholder")}
+            className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <DialogFooter>
+            {noteTarget?.note && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={noteSaving}
+                onClick={() => saveNote("")}
+                className="me-auto text-muted-foreground"
+              >
+                {t("noteRemove")}
+              </Button>
+            )}
             <Button
               type="button"
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs text-muted-foreground"
-              onClick={() => onNotCountedOnlyChange(!notCountedOnly)}
+              disabled={noteSaving}
+              onClick={() => saveNote(noteDraft)}
             >
-              {notCountedOnly ? t("notCountedShowAll") : t("notCountedShow")}
+              {t("noteSave")}
             </Button>
-          </div>
-        )}
-      </CardContent>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

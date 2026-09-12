@@ -194,7 +194,7 @@ function GeneralForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {[1, 2, 3, 6, 12].map((m) => (
+              {[1, 2, 3, 6, 12, 24, 36].map((m) => (
                 <SelectItem key={m} value={String(m)}>
                   {m} {m === 1 ? tCommon("month") : tCommon("months")}
                 </SelectItem>

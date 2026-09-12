@@ -1,5 +1,6 @@
 "use client";
 
+import { categoryEmoji } from "@/lib/category-emoji";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Search } from "lucide-react";
@@ -119,7 +120,7 @@ export default function CategoriesSettingsPage() {
               className="ps-8"
             />
           </div>
-          <NewGroupDialog kind={activeKind} />
+          <NewCategoryDialog kind={activeKind} categories={categories ?? []} />
         </div>
 
         {!categories ? (
@@ -268,7 +269,12 @@ function CategoryRow({
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-medium">
-            <span className="truncate">{category.name}</span>
+            <span className="truncate">
+              {categoryEmoji(category.icon) && (
+                <span className="me-1">{categoryEmoji(category.icon)}</span>
+              )}
+              {category.name}
+            </span>
           </div>
           {description ? (
             <div className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -318,18 +324,32 @@ function BudgetChip({
   );
 }
 
-function NewGroupDialog({ kind }: { kind: CategoryKind }) {
+const NO_PARENT = "__none__";
+
+function NewCategoryDialog({
+  kind,
+  categories,
+}: {
+  kind: CategoryKind;
+  categories: Category[];
+}) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [k, setK] = useState<CategoryKind>(kind);
+  const [parentValue, setParentValue] = useState<string>(NO_PARENT);
+
+  const parentOptions = categories
+    .filter((c) => c.kind === k)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const mutation = useMutation({
     mutationFn: () =>
       createCategory({
         name: name.trim(),
         kind: k,
-        isParent: true,
+        parentId:
+          parentValue === NO_PARENT ? undefined : Number(parentValue),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["categories"] });
@@ -348,20 +368,23 @@ function NewGroupDialog({ kind }: { kind: CategoryKind }) {
       open={open}
       onOpenChange={(o) => {
         setOpen(o);
-        if (o) setK(kind);
+        if (o) {
+          setK(kind);
+          setParentValue(NO_PARENT);
+        }
       }}
     >
       <DialogTrigger
         render={
           <Button variant="outline" size="sm" className="gap-1.5">
             <Plus className="h-3.5 w-3.5" />
-            New group
+            New category
           </Button>
         }
       />
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>New parent group</DialogTitle>
+          <DialogTitle>New category</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
@@ -383,7 +406,11 @@ function NewGroupDialog({ kind }: { kind: CategoryKind }) {
             <Label>Kind</Label>
             <Select
               value={k}
-              onValueChange={(v) => v && setK(v as CategoryKind)}
+              onValueChange={(v) => {
+                if (!v) return;
+                setK(v as CategoryKind);
+                setParentValue(NO_PARENT);
+              }}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -393,6 +420,29 @@ function NewGroupDialog({ kind }: { kind: CategoryKind }) {
                 <SelectItem value="income">Income</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Parent (optional)</Label>
+            <Select
+              value={parentValue}
+              onValueChange={(v) => v && setParentValue(v)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_PARENT}>No parent</SelectItem>
+                {parentOptions.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              A child starts in its parent&apos;s color family. Any category
+              can be a parent.
+            </p>
           </div>
         </div>
         <DialogFooter>

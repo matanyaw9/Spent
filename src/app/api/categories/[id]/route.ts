@@ -3,7 +3,9 @@ import {
   deleteCategory,
   setCategoryParent,
   updateCategoryBudgetMode,
+  updateCategoryColor,
   updateCategoryDescription,
+  updateCategoryIcon,
 } from "@/server/db/queries/categories";
 import { getWorkspaceIdFromRequest } from "@/server/lib/workspace-context";
 
@@ -31,9 +33,51 @@ export async function PATCH(
     budgetMode?: unknown;
     description?: unknown;
     parentId?: unknown;
+    color?: unknown;
+    icon?: unknown;
   };
 
   let applied = false;
+
+  if (typed.icon !== undefined) {
+    // Emoji only (a couple of glyphs), or null to clear. ZWJ sequences
+    // like a profession emoji run to ~8 UTF-16 units.
+    if (
+      typed.icon !== null &&
+      (typeof typed.icon !== "string" || typed.icon.trim().length > 12)
+    ) {
+      return NextResponse.json(
+        { error: "icon must be a short emoji string or null" },
+        { status: 400 }
+      );
+    }
+    const value =
+      typeof typed.icon === "string" && typed.icon.trim()
+        ? typed.icon.trim()
+        : null;
+    const ok = updateCategoryIcon(workspaceId, categoryId, value);
+    if (!ok) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    applied = true;
+  }
+
+  if (typed.color !== undefined) {
+    if (
+      typeof typed.color !== "string" ||
+      !/^#[0-9a-fA-F]{6}$/.test(typed.color)
+    ) {
+      return NextResponse.json(
+        { error: "color must be a #rrggbb hex string" },
+        { status: 400 }
+      );
+    }
+    const ok = updateCategoryColor(workspaceId, categoryId, typed.color);
+    if (!ok) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    applied = true;
+  }
 
   if (typed.budgetMode !== undefined) {
     if (typed.budgetMode !== "budgeted" && typed.budgetMode !== "tracking") {
